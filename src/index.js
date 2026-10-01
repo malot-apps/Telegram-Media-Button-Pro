@@ -121,8 +121,9 @@ async function finishDraft(ctx, text) {
     drafts.delete(ctx.from.id);
     await ctx.reply("✅ Published to channel.");
   } catch(e) {
-    console.error(e);
-    await ctx.reply("❌ Publish failed. Check bot admin permissions and Channel ID.");
+    console.error("Telegram publish error:", e);
+    const msg = e?.response?.description || e?.description || e?.message || "Unknown Telegram error";
+    await ctx.reply(`❌ Publish failed\\n\\nTelegram error: ${msg}\\n\\nCheck: Bot admin + Post Messages permission + CHANNEL_ID.`);
   }
   return true;
 }
@@ -141,8 +142,9 @@ app.post("/api/publish", auth, async (req,res)=>{
     const result=await publish({...p, buttons:normalizeButtons(p.buttons)});
     res.json({ok:true, message_id:result.message_id});
   } catch(e) {
-    console.error(e);
-    res.status(500).json({error:"Telegram publish failed"});
+    console.error("Telegram publish error:", e);
+    const msg = e?.response?.description || e?.description || e?.message || "Unknown Telegram error";
+    res.status(500).json({error: msg});
   }
 });
 app.post("/api/schedule", auth, (req,res)=>{
