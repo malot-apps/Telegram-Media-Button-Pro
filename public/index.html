@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telegram Media Button Pro</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef2ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1000px;margin:auto;padding:24px}.card{background:#121a2d;border:1px solid #26324d;border-radius:18px;padding:20px;margin:16px 0}
+h1{margin:0 0 6px}.muted{color:#9ca9c4}.grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+input,textarea,button{font:inherit}input,textarea{width:100%;background:#0b1020;color:#fff;border:1px solid #33415f;border-radius:10px;padding:11px;margin-top:6px}
+textarea{min-height:100px;resize:vertical}button{border:0;border-radius:10px;padding:11px 15px;cursor:pointer;background:#2d7cff;color:white;font-weight:700}
+button.secondary{background:#29344c}.row{display:flex;gap:8px;align-items:end;margin:8px 0}.row>*{flex:1}.row button{flex:0 0 auto;background:#b52d4d}
+.preview{background:#070b14;border-radius:15px;padding:12px}.media{width:100%;aspect-ratio:16/9;background:#1b263d;border-radius:12px;display:grid;place-items:center;color:#9ca9c4}.pbuttons{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.pbuttons div{background:#263653;border-radius:8px;padding:9px;text-align:center;font-size:13px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}.wrap{padding:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🎬 Telegram Media Button Pro</h1>
+<div class="muted">Create a Telegram channel media post with custom landing-page buttons.</div>
+
+<div class="card">
+<label>Admin Secret<input id="secret" type="password" placeholder="Your ADMIN_SECRET"></label>
+</div>
+
+<div class="grid">
+<div>
+<div class="card">
+<h2>1. Media</h2>
+<p class="muted">For the web panel, enter a Telegram file_id. You can obtain a file_id by sending the media to the bot using /new. The Telegram bot workflow is the easiest upload method.</p>
+<label>Type<select id="type"><option value="video">Video</option><option value="photo">Photo</option></select></label>
+<input id="file" placeholder="Telegram file_id">
+<label>Caption<textarea id="caption" placeholder="Optional caption. HTML is supported by Telegram."></textarea></label>
+</div>
+
+<div class="card">
+<h2>2. Buttons</h2>
+<div id="buttons"></div>
+<button onclick="addButton()">+ Add Button</button>
+</div>
+
+<div class="card">
+<h2>3. Publish</h2>
+<button onclick="publish()">🚀 Publish Now</button>
+</div>
+
+<div class="card">
+<h2>4. Schedule</h2>
+<input id="when" type="datetime-local">
+<button onclick="schedule()">🕐 Schedule Post</button>
+</div>
+</div>
+
+<div>
+<div class="card">
+<h2>Live Preview</h2>
+<div class="preview">
+<div class="media">▶️ Telegram Media</div>
+<div id="pcaption" class="muted" style="padding:10px 2px"></div>
+<div id="previewButtons" class="pbuttons"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let list=[];
+function addButton(text="",url=""){
+ list.push({text,url}); render();
+}
+function removeButton(i){list.splice(i,1);render();}
+function render(){
+ $("buttons").innerHTML=list.map((b,i)=>`<div class="row">
+ <input placeholder="Button text" value="${esc(b.text)}" oninput="list[${i}].text=this.value;renderPreview()">
+ <input placeholder="https://example.com" value="${esc(b.url)}" oninput="list[${i}].url=this.value;renderPreview()">
+ <button onclick="removeButton(${i})">×</button></div>`).join("");
+ renderPreview();
+}
+function renderPreview(){
+ $("pcaption").textContent=$("caption").value;
+ $("previewButtons").innerHTML=list.filter(x=>x.text&&x.url).map(x=>`<div>${esc(x.text)}</div>`).join("");
+}
+function esc(s){return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+$("caption").addEventListener("input",renderPreview);
+async function api(path,method,body){
+ const r=await fetch(path,{method,headers:{"Content-Type":"application/json","x-admin-secret":$("secret").value},body:JSON.stringify(body)});
+ const j=await r.json(); if(!r.ok) throw Error(j.error||"Request failed"); return j;
+}
+function payload(){return {type:$("type").value,file_id:$("file").value.trim(),caption:$("caption").value,buttons:list};}
+async function publish(){try{let j=await api("/api/publish","POST",payload());alert("Published. Message ID: "+j.message_id)}catch(e){alert(e.message)}}
+async function schedule(){
+ const p=payload();p.when=new Date($("when").value).toISOString();
+ try{let j=await api("/api/schedule","POST",p);alert("Scheduled: "+j.when)}catch(e){alert(e.message)}
+}
+addButton("▶️ WATCH NOW","https://example.com/watch");
+addButton("🌐 WEBSITE","https://example.com");
+</script>
+</body>
+</html>
