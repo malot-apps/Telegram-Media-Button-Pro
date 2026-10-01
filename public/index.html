@@ -8,11 +8,15 @@
 *{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef2ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
 .wrap{max-width:1000px;margin:auto;padding:24px}.card{background:#121a2d;border:1px solid #26324d;border-radius:18px;padding:20px;margin:16px 0}
 h1{margin:0 0 6px}.muted{color:#9ca9c4}.grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
-input,textarea,button{font:inherit}input,textarea{width:100%;background:#0b1020;color:#fff;border:1px solid #33415f;border-radius:10px;padding:11px;margin-top:6px}
+input,textarea,select,button{font:inherit}input,textarea,select{width:100%;background:#0b1020;color:#fff;border:1px solid #33415f;border-radius:10px;padding:11px;margin-top:6px}
 textarea{min-height:100px;resize:vertical}button{border:0;border-radius:10px;padding:11px 15px;cursor:pointer;background:#2d7cff;color:white;font-weight:700}
 button.secondary{background:#29344c}.row{display:flex;gap:8px;align-items:end;margin:8px 0}.row>*{flex:1}.row button{flex:0 0 auto;background:#b52d4d}
-.preview{background:#070b14;border-radius:15px;padding:12px}.media{width:100%;aspect-ratio:16/9;background:#1b263d;border-radius:12px;display:grid;place-items:center;color:#9ca9c4}.pbuttons{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.pbuttons div{background:#263653;border-radius:8px;padding:9px;text-align:center;font-size:13px}
-@media(max-width:760px){.grid{grid-template-columns:1fr}.wrap{padding:14px}}
+.preview{background:#070b14;border-radius:15px;padding:12px}.media{width:100%;aspect-ratio:16/9;background:#1b263d;border-radius:12px;display:grid;place-items:center;color:#9ca9c4;overflow:hidden}.media img,.media video{width:100%;height:100%;object-fit:contain}
+.pbuttons{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.pbuttons div{background:#263653;border-radius:8px;padding:9px;text-align:center;font-size:13px}
+.filebox{border:1px dashed #465577;border-radius:12px;padding:15px;margin-top:10px}
+.progress{height:8px;background:#202b43;border-radius:99px;overflow:hidden;margin-top:12px;display:none}.progress>div{height:100%;width:0;background:#2d7cff}
+.status{margin-top:10px;font-weight:600}.hint{font-size:13px;margin-top:7px;color:#8795b3}
+@media(max-width:760px){.grid{grid-template-columns:1fr}.wrap{padding:14px}.row{flex-direction:column;align-items:stretch}.row button{width:100%}}
 </style>
 </head>
 <body>
@@ -28,25 +32,44 @@ button.secondary{background:#29344c}.row{display:flex;gap:8px;align-items:end;ma
 <div>
 <div class="card">
 <h2>1. Media</h2>
-<p class="muted">For the web panel, enter a Telegram file_id. You can obtain a file_id by sending the media to the bot using /new. The Telegram bot workflow is the easiest upload method.</p>
-<label>Type<select id="type"><option value="video">Video</option><option value="photo">Photo</option></select></label>
-<input id="file" placeholder="Telegram file_id">
+<p class="muted">Upload a video/photo directly from your phone or computer, or use an existing Telegram file_id.</p>
+
+<label>Type
+<select id="type">
+<option value="video">Video</option>
+<option value="photo">Photo</option>
+</select>
+</label>
+
+<div class="filebox">
+<label>📤 Upload Media
+<input id="media" type="file" accept="video/*,image/*">
+</label>
+<div class="hint">Direct upload → Render → Telegram Channel. Maximum 50 MB.</div>
+</div>
+
+<div style="text-align:center;margin:12px 0;color:#687797">— OR —</div>
+<input id="file" placeholder="Telegram file_id (optional)">
+
 <label>Caption<textarea id="caption" placeholder="Optional caption. HTML is supported by Telegram."></textarea></label>
 </div>
 
 <div class="card">
 <h2>2. Buttons</h2>
 <div id="buttons"></div>
-<button onclick="addButton()">+ Add Button</button>
+<button type="button" onclick="addButton()">+ Add Button</button>
 </div>
 
 <div class="card">
 <h2>3. Publish</h2>
 <button onclick="publish()">🚀 Publish Now</button>
+<div class="progress" id="progress"><div></div></div>
+<div class="status" id="status"></div>
 </div>
 
 <div class="card">
 <h2>4. Schedule</h2>
+<p class="muted">Scheduled posts continue to use Telegram file_id, as in the original version.</p>
 <input id="when" type="datetime-local">
 <button onclick="schedule()">🕐 Schedule Post</button>
 </div>
@@ -56,7 +79,7 @@ button.secondary{background:#29344c}.row{display:flex;gap:8px;align-items:end;ma
 <div class="card">
 <h2>Live Preview</h2>
 <div class="preview">
-<div class="media">▶️ Telegram Media</div>
+<div class="media" id="mediaPreview">▶️ Telegram Media</div>
 <div id="pcaption" class="muted" style="padding:10px 2px"></div>
 <div id="previewButtons" class="pbuttons"></div>
 </div>
@@ -68,9 +91,8 @@ button.secondary{background:#29344c}.row{display:flex;gap:8px;align-items:end;ma
 <script>
 const $=id=>document.getElementById(id);
 let list=[];
-function addButton(text="",url=""){
- list.push({text,url}); render();
-}
+
+function addButton(text="",url=""){if(list.length>=12)return alert("Maximum 12 buttons.");list.push({text,url});render();}
 function removeButton(i){list.splice(i,1);render();}
 function render(){
  $("buttons").innerHTML=list.map((b,i)=>`<div class="row">
@@ -85,16 +107,85 @@ function renderPreview(){
 }
 function esc(s){return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 $("caption").addEventListener("input",renderPreview);
-async function api(path,method,body){
- const r=await fetch(path,{method,headers:{"Content-Type":"application/json","x-admin-secret":$("secret").value},body:JSON.stringify(body)});
- const j=await r.json(); if(!r.ok) throw Error(j.error||"Request failed"); return j;
-}
+
+$("media").addEventListener("change",()=>{
+ const f=$("media").files[0];
+ if(!f)return;
+ const url=URL.createObjectURL(f);
+ $("mediaPreview").innerHTML=$("type").value==="video"
+   ? `<video controls src="${url}"></video>`
+   : `<img src="${url}" alt="preview">`;
+});
+$("type").addEventListener("change",()=>{
+ const f=$("media").files[0];
+ if(f){
+   const url=URL.createObjectURL(f);
+   $("mediaPreview").innerHTML=$("type").value==="video"
+     ? `<video controls src="${url}"></video>`
+     : `<img src="${url}" alt="preview">`;
+ }
+});
+
 function payload(){return {type:$("type").value,file_id:$("file").value.trim(),caption:$("caption").value,buttons:list};}
-async function publish(){try{let j=await api("/api/publish","POST",payload());alert("Published. Message ID: "+j.message_id)}catch(e){alert(e.message)}}
+
+async function publish(){
+ const secret=$("secret").value.trim();
+ if(!secret)return alert("Enter Admin Secret.");
+ const file=$("media").files[0];
+
+ $("status").textContent="Publishing...";
+ $("progress").style.display="block";
+ $("progress").firstElementChild.style.width="10%";
+
+ try{
+   let j;
+   if(file){
+     const fd=new FormData();
+     fd.append("media",file);
+     fd.append("type",$("type").value);
+     fd.append("caption",$("caption").value);
+     fd.append("buttons",JSON.stringify(list));
+     const r=await fetch("/api/publish-upload",{
+       method:"POST",
+       headers:{"x-admin-secret":secret},
+       body:fd
+     });
+     j=await r.json();
+     if(!r.ok)throw Error(j.error||"Upload/publish failed");
+   }else{
+     if(!$("file").value.trim())throw Error("Select a media file or enter a Telegram file_id.");
+     const r=await fetch("/api/publish",{
+       method:"POST",
+       headers:{"Content-Type":"application/json","x-admin-secret":secret},
+       body:JSON.stringify(payload())
+     });
+     j=await r.json();
+     if(!r.ok)throw Error(j.error||"Publish failed");
+   }
+   $("progress").firstElementChild.style.width="100%";
+   $("status").textContent="✅ Published to channel. Message ID: "+j.message_id;
+ }catch(e){
+   $("status").textContent="❌ "+e.message;
+ }finally{
+   setTimeout(()=>$("progress").style.display="none",800);
+ }
+}
+
 async function schedule(){
  const p=payload();p.when=new Date($("when").value).toISOString();
- try{let j=await api("/api/schedule","POST",p);alert("Scheduled: "+j.when)}catch(e){alert(e.message)}
+ if(!p.file_id)return alert("For Schedule, enter a Telegram file_id. Upload via Telegram /new first.");
+ try{
+   const r=await fetch("/api/schedule",{
+     method:"POST",
+     headers:{"Content-Type":"application/json","x-admin-secret":$("secret").value},
+     body:JSON.stringify(p)
+   });
+   const j=await r.json();
+   if(!r.ok)throw Error(j.error||"Request failed");
+   alert("Scheduled: "+j.when);
+ }catch(e){alert(e.message)}
 }
+
 addButton("▶️ WATCH NOW","https://example.com/watch");
 addButton("🌐 WEBSITE","https://example.com");
 </script>
