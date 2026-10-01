@@ -22,7 +22,7 @@ const drafts = new Map();
 const schedules = new Map();
 
 function admin(id) { return ADMIN_IDS.includes(String(id)); }
-function validUrl(u) { return typeof u === "string" && /^https?:\\/\\//i.test(u.trim()); }
+function validUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u.trim()); }
 function auth(req, res, next) {
   if (req.headers["x-admin-secret"] !== ADMIN_SECRET) return res.status(401).json({error:"Unauthorized"});
   next();
