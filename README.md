@@ -1,39 +1,34 @@
-# Telegram Media Button Pro v2.1
+# Telegram Media Button Pro v3
 
-Adds direct browser upload while keeping the original Telegram bot workflow.
+### Features
+- Telegram `/new` photo/video workflow retained.
+- Web admin panel can upload photo/video and publish immediately.
+- Up to 12 custom URL buttons, editable labels/URLs, drag/drop reorder, 1/2/3-column row layout, and live preview.
+- Save/reuse/delete button templates.
+- Click tracking and analytics dashboard.
+- Multi-channel targeting via `CHANNELS`.
+- Scheduled posts using Telegram `file_id`.
 
-## New web workflow
+### Render setup
+1. Upload project files to GitHub. Do not upload `.env`.
+2. Render Web Service: Build command `npm install`; Start command `npm start`.
+3. Add Environment Variables:
+   - `BOT_TOKEN`: token from @BotFather
+   - `CHANNEL_ID`: default channel ID, e.g. `-1003980723831`
+   - `CHANNELS`: optional comma-separated channel IDs/usernames; include every channel the bot is allowed to post to
+   - `ADMIN_IDS`: your Telegram numeric user ID
+   - `ADMIN_SECRET`: strong secret password
+   - `PUBLIC_BASE_URL`: your full HTTPS Render URL, e.g. `https://telegram-media-button-pro.onrender.com`
+   - `PORT`: usually let Render provide it; default is 3000
+4. Add bot as administrator to every channel and enable Post Messages.
+5. Open Render URL, enter `ADMIN_SECRET`, then use Composer.
 
-1. Open the web panel.
-2. Enter `ADMIN_SECRET`.
-3. Choose Video or Photo.
-4. Select a local media file.
-5. Add up to 12 URL buttons.
-6. Click **Publish Now**.
-7. The Render server uploads the media to Telegram and publishes it to `CHANNEL_ID`.
+### Bot flow
+Send `/new`, send photo/video, then send `Button label | https://example.com` lines.
 
-The old `Telegram file_id` web publishing method still works.
-
-## Deployment
-
-Set these environment variables in Render:
-
-- `BOT_TOKEN`
-- `CHANNEL_ID`
-- `ADMIN_IDS`
-- `ADMIN_SECRET`
-- `PORT` (Render normally supplies this; default 3000)
-
-Then run:
-
-```bash
-npm install
-npm start
-```
-
-## Important
-
-- The browser upload endpoint accepts video/image files up to 50 MB.
-- Scheduled publishing still uses an existing Telegram `file_id`.
-- Keep `.env` out of GitHub. Use Render Environment Variables.
-- Make `ADMIN_SECRET` long and random.
+### Notes
+- Telegram's native video player cannot be redesigned; inline buttons are attached to the message.
+- Click tracking needs `PUBLIC_BASE_URL` set to the service's public HTTPS URL.
+- Store file is `data/store.json`. Render's ephemeral filesystem can lose analytics, templates and schedules after restarts/redeploys. Attach a persistent disk and set `DATA_DIR` to its mount path for durable data.
+- Scheduling requires `file_id`; direct web upload is for immediate publishing. Obtain a file_id by sending media to the bot via `/new`.
+- Web uploads are limited to 50 MB in this implementation.
