@@ -32,3 +32,7 @@ Send `/new`, send photo/video, then send `Button label | https://example.com` li
 - Store file is `data/store.json`. Render's ephemeral filesystem can lose analytics, templates and schedules after restarts/redeploys. Attach a persistent disk and set `DATA_DIR` to its mount path for durable data.
 - Scheduling requires `file_id`; direct web upload is for immediate publishing. Obtain a file_id by sending media to the bot via `/new`.
 - Web uploads are limited to 50 MB in this implementation.
+
+
+## v3.0.1 hotfix
+Set Render Environment Variable `PUBLIC_BASE_URL` to your actual full public Render URL, e.g. `https://your-service.onrender.com` (no trailing slash). Tracked Telegram button links must be absolute URLs; the app now gives a clear error if this value is missing or invalid.
