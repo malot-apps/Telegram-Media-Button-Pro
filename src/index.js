@@ -1,301 +1,34 @@
-require("dotenv").config();
-const express = require("express");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const multer = require("multer");
-const { Telegraf, Markup } = require("telegraf");
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const ADMIN_IDS = (process.env.ADMIN_IDS || "").split(",").map(x => x.trim()).filter(Boolean);
-const PORT = Number(process.env.PORT || 3000);
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "change-this-password";
-
-if (!BOT_TOKEN || !CHANNEL_ID || !ADMIN_IDS.length) {
-  console.error("Set BOT_TOKEN, CHANNEL_ID and ADMIN_IDS in environment variables.");
-  process.exit(1);
-}
-
-const bot = new Telegraf(BOT_TOKEN);
-const app = express();
-app.use(express.json({ limit: "1mb" }));
-app.use(express.static("public"));
-
-const uploadDir = path.join(os.tmpdir(), "telegram-media-button-pro");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const upload = multer({
-  dest: uploadDir,
-  limits: { fileSize: 50 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowed = /^(video|image)\//i.test(file.mimetype || "");
-    cb(allowed ? null : new Error("Only video or image files are allowed."), allowed);
-  }
-});
-
-const drafts = new Map();
-const schedules = new Map();
-
-function admin(id) { return ADMIN_IDS.includes(String(id)); }
-function validUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u.trim()); }
-function auth(req, res, next) {
-  if (req.headers["x-admin-secret"] !== ADMIN_SECRET)
-    return res.status(401).json({ error: "Unauthorized" });
-  next();
-}
-function buttonsMarkup(buttons = []) {
-  const rows = [];
-  for (let i = 0; i < buttons.length; i += 2) {
-    rows.push(buttons.slice(i, i + 2).map(b => Markup.button.url(b.text, b.url)));
-  }
-  return rows.length ? Markup.inlineKeyboard(rows) : undefined;
-}
-function normalizeButtons(buttons = []) {
-  if (!Array.isArray(buttons)) return [];
-  return buttons.slice(0, 12)
-    .filter(b => b && b.text && validUrl(b.url))
-    .map(b => ({ text: String(b.text).slice(0, 40), url: b.url.trim() }));
-}
-
-async function publish(post) {
-  const buttons = normalizeButtons(post.buttons);
-  const extra = {
-    caption: post.caption || undefined,
-    parse_mode: "HTML",
-    ...(buttonsMarkup(buttons) || {})
-  };
-
-  if (post.type === "video") {
-    return bot.telegram.sendVideo(CHANNEL_ID, post.file_id, extra);
-  }
-  return bot.telegram.sendPhoto(CHANNEL_ID, post.file_id, extra);
-}
-
-async function publishUploadedFile(file, type, caption, buttons) {
-  if (!file) throw new Error("Media file is required.");
-
-  const extra = {
-    caption: caption || undefined,
-    parse_mode: "HTML",
-    ...(buttonsMarkup(normalizeButtons(buttons)) || {})
-  };
-
-  try {
-    const input = { source: file.path, filename: file.originalname };
-    if (type === "video") {
-      return await bot.telegram.sendVideo(CHANNEL_ID, input, extra);
-    }
-    return await bot.telegram.sendPhoto(CHANNEL_ID, input, extra);
-  } finally {
-    fs.promises.unlink(file.path).catch(() => {});
-  }
-}
-
-// Telegram bot workflow
-bot.start(ctx => {
-  if (!admin(ctx.from.id)) return;
-  ctx.reply(
-`🎬 Media Button Pro
-
-/new — create a post
-/cancel — cancel
-/id — show your ID
-
-After /new, send a photo/video.
-Then send buttons like:
-
-▶️ WATCH | https://example.com
-🌐 WEBSITE | https://example.com/site`
-  );
-});
-bot.command("id", ctx => ctx.reply(`Your Telegram ID: ${ctx.from.id}`));
-bot.command("cancel", ctx => {
-  drafts.delete(ctx.from.id);
-  ctx.reply("Draft cancelled.");
-});
-bot.command("new", ctx => {
-  if (!admin(ctx.from.id)) return;
-  drafts.set(ctx.from.id, { step: "media" });
-  ctx.reply("📤 Send the photo or video.");
-});
-
-bot.on(["photo", "video"], async ctx => {
-  if (!admin(ctx.from.id)) return;
-  const d = drafts.get(ctx.from.id);
-  if (!d || d.step !== "media") return ctx.reply("Use /new first.");
-
-  if (ctx.message.video) {
-    d.type = "video";
-    d.file_id = ctx.message.video.file_id;
-    d.caption = ctx.message.caption || "";
-  } else {
-    d.type = "photo";
-    d.file_id = ctx.message.photo.at(-1).file_id;
-    d.caption = ctx.message.caption || "";
-  }
-  d.step = "buttons";
-  drafts.set(ctx.from.id, d);
-  ctx.reply(
-`✅ Media received.
-
-Send one button per line:
-Button Name | https://example.com
-
-Maximum 12 buttons.
-Send /skip to publish without buttons.`
-  );
-});
-
-async function finishDraft(ctx, text) {
-  const d = drafts.get(ctx.from.id);
-  if (!d || d.step !== "buttons") return false;
-  const buttons = text.split("\n").map(x => {
-    const i = x.lastIndexOf("|");
-    return i > 0 ? { text: x.slice(0, i).trim(), url: x.slice(i + 1).trim() } : null;
-  }).filter(Boolean);
-  const good = normalizeButtons(buttons);
-
-  if (text !== "/skip" && !good.length) {
-    await ctx.reply("⚠️ Format invalid. Use: Button Name | https://example.com");
-    return true;
-  }
-  try {
-    await publish({ ...d, buttons: text === "/skip" ? [] : good });
-    drafts.delete(ctx.from.id);
-    await ctx.reply("✅ Published to channel.");
-  } catch (e) {
-    console.error("Telegram publish error:", e);
-    const msg = e?.response?.description || e?.description || e?.message || "Unknown Telegram error";
-    await ctx.reply(`❌ Publish failed\n\nTelegram error: ${msg}\n\nCheck: Bot admin + Post Messages permission + CHANNEL_ID.`);
-  }
-  return true;
-}
-bot.on("text", ctx => {
-  if (!admin(ctx.from.id)) return;
-  finishDraft(ctx, ctx.message.text);
-});
-
-// Admin API
-app.get("/api/health", (_, res) => res.json({ ok: true }));
-
-app.post("/api/publish", auth, async (req, res) => {
-  const p = req.body;
-  if (!["photo", "video"].includes(p.type) || !p.file_id)
-    return res.status(400).json({ error: "type and file_id required" });
-
-  try {
-    const result = await publish({ ...p, buttons: normalizeButtons(p.buttons) });
-    res.json({ ok: true, message_id: result.message_id });
-  } catch (e) {
-    console.error("Telegram publish error:", e);
-    const msg = e?.response?.description || e?.description || e?.message || "Unknown Telegram error";
-    res.status(500).json({ error: msg });
-  }
-});
-
-// NEW: direct browser upload -> Telegram channel
-app.post("/api/publish-upload", auth, upload.single("media"), async (req, res) => {
-  try {
-    const type = req.body.type;
-    if (!["photo", "video"].includes(type))
-      return res.status(400).json({ error: "type must be photo or video" });
-    if (!req.file)
-      return res.status(400).json({ error: "media file is required" });
-
-    let buttons = [];
-    try { buttons = JSON.parse(req.body.buttons || "[]"); } catch (_) {}
-
-    const result = await publishUploadedFile(
-      req.file,
-      type,
-      req.body.caption || "",
-      buttons
-    );
-
-    res.json({
-      ok: true,
-      message_id: result.message_id,
-      file_id: type === "video" ? result.video?.file_id : result.photo?.at(-1)?.file_id
-    });
-  } catch (e) {
-    if (req.file?.path) fs.promises.unlink(req.file.path).catch(() => {});
-    console.error("Direct upload publish error:", e);
-    const msg = e?.response?.description || e?.description || e?.message || "Upload/publish failed";
-    res.status(500).json({ error: msg });
-  }
-});
-
-// Schedule using an existing Telegram file_id (keeps current behavior)
-app.post("/api/schedule", auth, (req, res) => {
-  const p = req.body;
-  if (!p.file_id || !["photo", "video"].includes(p.type) || !p.when)
-    return res.status(400).json({ error: "type, file_id and when are required" });
-
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  const when = Date.parse(p.when);
-  if (!Number.isFinite(when) || when <= Date.now())
-    return res.status(400).json({ error: "Invalid future time" });
-
-  schedules.set(id, { ...p, buttons: normalizeButtons(p.buttons), when });
-  res.json({ ok: true, id, when: new Date(when).toISOString() });
-});
-
-// NEW: upload media first, then schedule it by Telegram file_id
-app.post("/api/schedule-upload", auth, upload.single("media"), async (req, res) => {
-  try {
-    const type = req.body.type;
-    if (!["photo", "video"].includes(type))
-      return res.status(400).json({ error: "type must be photo or video" });
-    if (!req.file)
-      return res.status(400).json({ error: "media file is required" });
-
-    const when = Date.parse(req.body.when);
-    if (!Number.isFinite(when) || when <= Date.now())
-      return res.status(400).json({ error: "Invalid future time" });
-
-    let buttons = [];
-    try { buttons = JSON.parse(req.body.buttons || "[]"); } catch (_) {}
-
-    // Upload once to Telegram by sending to the channel; then use returned file_id
-    // for the scheduled post would duplicate the post, so instead obtain file_id
-    // via Telegram getFile is not possible for an unuploaded local file. Therefore
-    // scheduled browser uploads are intentionally not enabled here.
-    return res.status(400).json({
-      error: "Direct browser upload supports Publish Now. For Schedule, upload via Telegram first and use its file_id."
-    });
-  } finally {
-    if (req.file?.path) fs.promises.unlink(req.file.path).catch(() => {});
-  }
-});
-
-app.get("/api/schedules", auth, (_, res) =>
-  res.json([...schedules.entries()].map(([id, p]) => ({ id, ...p })))
-);
-app.delete("/api/schedules/:id", auth, (req, res) => {
-  const ok = schedules.delete(req.params.id);
-  res.json({ ok });
-});
-
-setInterval(async () => {
-  const now = Date.now();
-  for (const [id, p] of schedules) {
-    if (p.when <= now) {
-      try { await publish(p); }
-      catch (e) { console.error("Scheduled publish:", e); }
-      schedules.delete(id);
-    }
-  }
-}, 1000);
-
-app.use((err, req, res, next) => {
-  if (err?.code === "LIMIT_FILE_SIZE")
-    return res.status(413).json({ error: "File is too large. Maximum is 50 MB." });
-  if (err) return res.status(400).json({ error: err.message || "Request failed" });
-  next();
-});
-
-app.listen(PORT, () => console.log(`Admin panel: http://localhost:${PORT}`));
-bot.launch().then(() => console.log("Telegram bot running"));
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+require('dotenv').config();
+const express=require('express'), multer=require('multer'), fs=require('fs'), path=require('path'), crypto=require('crypto');
+const {Telegraf,Markup}=require('telegraf');
+const TOKEN=process.env.BOT_TOKEN, DEFAULT=(process.env.CHANNEL_ID||'').trim(), ADMINS=(process.env.ADMIN_IDS||'').split(',').map(x=>x.trim()).filter(Boolean), SECRET=process.env.ADMIN_SECRET||'', PORT=Number(process.env.PORT||3000);
+const CHANNELS=[...new Set([...(process.env.CHANNELS||'').split(',').map(x=>x.trim()).filter(Boolean),...(DEFAULT?[DEFAULT]:[])])];
+if(!TOKEN||!CHANNELS.length||!ADMINS.length||!SECRET){console.error('Set BOT_TOKEN, CHANNEL_ID/CHANNELS, ADMIN_IDS and ADMIN_SECRET');process.exit(1)}
+const bot=new Telegraf(TOKEN), app=express(); app.use(express.json({limit:'2mb'})); app.use(express.static(path.join(__dirname,'../public')));
+const DATA=process.env.DATA_DIR||path.join(__dirname,'../data'), UP=process.env.UPLOAD_DIR||path.join(__dirname,'../uploads'); fs.mkdirSync(DATA,{recursive:true});fs.mkdirSync(UP,{recursive:true});
+const DB=path.join(DATA,'store.json'), fresh=()=>({clicks:{},events:[],schedules:{},templates:{}}); let db; try{db={...fresh(),...JSON.parse(fs.readFileSync(DB,'utf8'))}}catch{db=fresh()}
+function save(){const tmp=DB+'.tmp';fs.writeFileSync(tmp,JSON.stringify(db,null,2));fs.renameSync(tmp,DB)}
+const upload=multer({dest:UP,limits:{fileSize:50*1024*1024},fileFilter:(r,f,cb)=>cb((/^image\//.test(f.mimetype)||/^video\//.test(f.mimetype))?null:new Error('Only photo/video files are supported.'))});
+const auth=(req,res,next)=>{if(req.headers['x-admin-secret']!==SECRET)return res.status(401).json({error:'Unauthorized: check Admin Secret'});next()};
+const validUrl=u=>typeof u==='string'&&/^https?:\/\//i.test(u.trim());
+function buttonsSafe(arr=[]){ return (Array.isArray(arr)?arr:[]).slice(0,12).filter(b=>b && String(b.text||'').trim() && validUrl(b.url)).map((b,i)=>({ id:String(b.id||crypto.randomUUID()), text:String(b.text).trim().slice(0,40), url:b.url.trim(), row:Math.max(0,Math.min(20,Number(b.row ?? Math.floor(i/2)))) })); }
+function keyboard(arr){if(!arr.length)return undefined;const rows={};for(const b of arr){const id=crypto.randomUUID();db.clicks[id]={id,label:b.text,target:b.url,count:0,createdAt:new Date().toISOString()};(rows[b.row]??=[]).push(Markup.button.url(b.text,`${(process.env.PUBLIC_BASE_URL||'').replace(/\/$/,'')}/r/${id}`))}save();return Markup.inlineKeyboard(Object.keys(rows).sort((a,b)=>a-b).map(k=>rows[k]))}
+async function publish(p,file){const kb=keyboard(buttonsSafe(p.buttons)),extra={caption:String(p.caption||'').slice(0,1024)||undefined,...(kb||{})},targets=p.targets?.length?p.targets:[DEFAULT];let last;
+ for(const target of targets){if(!CHANNELS.includes(target))throw Error('Channel target is not configured: '+target);if(file){const source={source:file.path};last=p.type==='video'?await bot.telegram.sendVideo(target,source,extra):await bot.telegram.sendPhoto(target,source,extra)}else{if(!p.file_id)throw Error('A Telegram file_id is required');last=p.type==='video'?await bot.telegram.sendVideo(target,p.file_id,extra):await bot.telegram.sendPhoto(target,p.file_id,extra)}}return last}
+const drafts=new Map(), isAdmin=id=>ADMINS.includes(String(id));
+bot.start(ctx=>{if(!isAdmin(ctx.from.id))return;ctx.reply('🎬 Media Button Pro v3\n/new — create post\n/cancel — cancel\n/id — show Telegram ID\n\nAfter /new send photo/video, then one button per line:\nWATCH NOW | https://example.com/watch\nWEBSITE | https://example.com\n\nMaximum 12 buttons. /skip publishes without buttons.')});
+bot.command('id',ctx=>ctx.reply('Your Telegram ID: '+ctx.from.id));bot.command('cancel',ctx=>{drafts.delete(ctx.from.id);ctx.reply('Draft cancelled')});bot.command('new',ctx=>{if(!isAdmin(ctx.from.id))return;drafts.set(ctx.from.id,{step:'media',targets:[DEFAULT]});ctx.reply('Send a photo or video now.')});
+bot.on(['photo','video'],ctx=>{if(!isAdmin(ctx.from.id))return;const d=drafts.get(ctx.from.id);if(!d||d.step!=='media')return;if(ctx.message.video){d.type='video';d.file_id=ctx.message.video.file_id;d.caption=ctx.message.caption||''}else{d.type='photo';d.file_id=ctx.message.photo.at(-1).file_id;d.caption=ctx.message.caption||''}d.step='buttons';drafts.set(ctx.from.id,d);ctx.reply('✅ Media received. Send one button per line:\nButton Name | https://example.com\nMaximum 12 buttons. Send /skip to publish without buttons.')});
+bot.on('text',async ctx=>{if(!isAdmin(ctx.from.id))return;const d=drafts.get(ctx.from.id);if(!d||d.step!=='buttons')return;let bs=[];if(ctx.message.text!=='/skip')bs=ctx.message.text.split('\n').map((s,i)=>{const p=s.lastIndexOf('|');return p>0?{text:s.slice(0,p).trim(),url:s.slice(p+1).trim(),row:i}:null}).filter(Boolean);if(ctx.message.text!=='/skip'&&!buttonsSafe(bs).length)return ctx.reply('Invalid format. Use Button Name | https://example.com');try{await publish({...d,buttons:bs});drafts.delete(ctx.from.id);ctx.reply('✅ Published to channel.')}catch(e){console.error(e);ctx.reply('❌ Publish failed\nTelegram error: '+(e?.response?.description||e.message))}});
+app.get('/api/config',auth,(_,res)=>res.json({channels:CHANNELS}));
+app.post('/api/publish',auth,async(req,res)=>{try{const p=req.body;if(!['photo','video'].includes(p.type))return res.status(400).json({error:'Choose photo or video type'});const m=await publish({...p,buttons:buttonsSafe(p.buttons)});res.json({ok:true,message_id:m.message_id})}catch(e){console.error(e);res.status(500).json({error:e?.response?.description||e.message})}});
+app.post('/api/upload-publish',auth,upload.single('media'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Choose a photo or video'});try{const p=JSON.parse(req.body.post||'{}');p.type=req.file.mimetype.startsWith('video/')?'video':'photo';const m=await publish({...p,buttons:buttonsSafe(p.buttons)},req.file);res.json({ok:true,message_id:m.message_id})}catch(e){console.error(e);res.status(500).json({error:e?.response?.description||e.message})}finally{fs.promises.unlink(req.file.path).catch(()=>{})}});
+app.post('/api/templates',auth,(req,res)=>{if(!req.body.name||!Array.isArray(req.body.buttons))return res.status(400).json({error:'Template name and buttons required'});const id=crypto.randomUUID();db.templates[id]={id,name:String(req.body.name).slice(0,60),buttons:buttonsSafe(req.body.buttons)};save();res.json({ok:true,template:db.templates[id]})});
+app.get('/api/templates',auth,(_,res)=>res.json(Object.values(db.templates)));app.delete('/api/templates/:id',auth,(req,res)=>{const ok=!!db.templates[req.params.id];delete db.templates[req.params.id];save();res.json({ok})});
+app.get('/api/analytics',auth,(_,res)=>{const links=Object.values(db.clicks).sort((a,b)=>b.count-a.count);res.json({totalClicks:links.reduce((n,x)=>n+x.count,0),links,recent:db.events.slice(-50).reverse()})});
+app.get('/r/:id',(req,res)=>{const x=db.clicks[req.params.id];if(!x)return res.status(404).send('Tracking link not found');x.count++;db.events.push({id:x.id,label:x.label,target:x.target,at:new Date().toISOString()});if(db.events.length>5000)db.events=db.events.slice(-5000);save();res.redirect(302,x.target)});
+app.post('/api/schedule',auth,(req,res)=>{const p=req.body,when=Date.parse(p.when);if(!p.file_id||!['photo','video'].includes(p.type)||!Number.isFinite(when)||when<=Date.now())return res.status(400).json({error:'Schedule requires photo/video type, Telegram file_id and future date/time'});const id=crypto.randomUUID();db.schedules[id]={...p,buttons:buttonsSafe(p.buttons),when};save();res.json({ok:true,id})});
+app.get('/api/schedules',auth,(_,res)=>res.json(Object.entries(db.schedules).map(([id,p])=>({id,...p}))));app.delete('/api/schedules/:id',auth,(req,res)=>{const ok=!!db.schedules[req.params.id];delete db.schedules[req.params.id];save();res.json({ok})});
+app.get('/health',(_,res)=>res.json({ok:true,version:'3.0.0'}));
+setInterval(async()=>{for(const [id,p] of Object.entries(db.schedules)){if(p.when<=Date.now()){try{await publish(p)}catch(e){console.error('Scheduled post failed',e?.response?.description||e.message)}delete db.schedules[id];save()}}},5000);
+app.use((e,req,res,next)=>{console.error(e);res.status(400).json({error:e.message||'Request failed'})});app.listen(PORT,()=>console.log('Admin panel listening on '+PORT));bot.launch().then(()=>console.log('Telegram bot running'));process.once('SIGINT',()=>bot.stop('SIGINT'));process.once('SIGTERM',()=>bot.stop('SIGTERM'));
