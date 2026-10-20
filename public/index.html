@@ -1,10 +1,875 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Telegram Media Button Pro v3</title><style>
-*{box-sizing:border-box}body{margin:0;background:#0a1020;color:#edf2ff;font:15px system-ui,Arial}header{padding:22px max(16px,calc((100% - 1100px)/2));background:#121c30;border-bottom:1px solid #2a3854}h1{margin:0}p,.muted,.note{color:#9cacca}.wrap{max-width:1100px;margin:auto;padding:16px}.card{background:#121c30;border:1px solid #293754;border-radius:15px;padding:16px;margin:14px 0}.tabs{display:flex;gap:8px;flex-wrap:wrap}button{background:#3478f6;color:white;border:0;border-radius:9px;padding:10px 13px;font-weight:700;cursor:pointer}button.secondary{background:#2b3954}button.danger{background:#b8324b}input,textarea,select{width:100%;padding:10px;background:#0b1325;color:#fff;border:1px solid #34435f;border-radius:8px;margin:5px 0 12px}label{font-size:13px;color:#c2cee2}.grid{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}.row{display:grid;grid-template-columns:24px 1fr 1.4fr 70px 35px;gap:6px;align-items:center;padding:7px;background:#0b1428;border-radius:9px;margin:7px 0}.row input{margin:0;min-width:0}.drag{text-align:center;cursor:grab}.preview{background:#070c16;padding:12px;border-radius:12px}.media{aspect-ratio:16/9;background:#1c2b45;border-radius:9px;display:grid;place-items:center;color:#bed0ed}.caption{white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 0}.pbuttons{display:grid;gap:6px}.pbuttons div{background:#2a3d60;border-radius:8px;padding:9px;text-align:center}.statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.stat{background:#0b1428;padding:12px;border-radius:10px}.stat strong{display:block;font-size:23px}.item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #2a3854;overflow-wrap:anywhere}.hidden{display:none!important}.note{font-size:12px;line-height:1.5}@media(max-width:760px){.grid{grid-template-columns:1fr}.row{grid-template-columns:18px 1fr 1.1fr 52px 30px;gap:4px;padding:4px}.row input,.row select{font-size:11px;padding:7px}.statgrid{grid-template-columns:1fr 1fr}}
-</style></head><body><header><h1>🎬 Telegram Media Button Pro <small>v3</small></h1><p>Custom buttons · Templates · Click analytics · Multi-channel</p></header><main class="wrap"><div class="card"><label>Admin Secret (Render ADMIN_SECRET)</label><input id="secret" type="password" placeholder="Enter secret"><button onclick="connect()">Connect</button> <span id="status" class="muted">Not connected</span></div><div id="app" class="hidden"><nav class="tabs"><button onclick="tab('compose')">📝 Composer</button><button onclick="tab('templates')">📚 Templates</button><button onclick="tab('analytics')">📊 Analytics</button><button onclick="tab('schedules')">🕐 Scheduled</button></nav>
-<section id="compose"><div class="grid"><div><div class="card"><h2>1. Media & Channel</h2><label>Upload photo/video (up to 50 MB)</label><input id="media" type="file" accept="image/*,video/*"><p class="note">Direct upload publishes immediately. For scheduled posts, enter a Telegram file_id.</p><label>Telegram file_id (for scheduling or bot-uploaded media)</label><input id="fileid" placeholder="File ID"><label>Type</label><select id="type"><option value="video">Video</option><option value="photo">Photo</option></select><label>Channels</label><div id="channels"></div><label>Caption</label><textarea id="caption" placeholder="Post caption"></textarea></div><div class="card"><h2>2. Button Builder (max 12)</h2><div id="buttons"></div><button onclick="addButton()">+ Add button</button> <button class="secondary" onclick="buttons=[];render()">Clear</button><label>Buttons per row</label><select id="layout" onchange="relayout()"><option value="1">1 per row</option><option value="2" selected>2 per row</option><option value="3">3 per row</option></select><p class="note">Drag ⠿ to reorder. Each button has its own label, URL and row. Telegram native video-player controls cannot be redesigned, but inline buttons can be customized.</p></div><div class="card"><h2>3. Publish / Save</h2><button onclick="publishNow()">🚀 Publish now</button> <button class="secondary" onclick="saveTemplate()">💾 Save template</button><hr><h3>Schedule</h3><label>Future date and time</label><input id="when" type="datetime-local"><button onclick="schedulePost()">🕐 Schedule by file_id</button><p class="note">Render without a persistent disk may lose schedules, templates and analytics on restart/redeploy.</p></div></div><div class="card"><h2>Live Preview</h2><div class="preview"><div id="mediapreview" class="media">▶️ Photo / Video</div><div id="pcaption" class="caption"></div><div id="pbuttons" class="pbuttons"></div></div></div></div></section>
-<section id="templates" class="hidden"><div class="card"><h2>Saved Templates</h2><div id="templatelist"></div></div></section><section id="analytics" class="hidden"><div class="card"><h2>Button Click Analytics</h2><button onclick="loadAnalytics()">Refresh</button><div id="stats" class="statgrid"></div><h3>Tracked links</h3><div id="links"></div><h3>Recent clicks</h3><div id="recent"></div></div></section><section id="schedules" class="hidden"><div class="card"><h2>Scheduled posts</h2><button onclick="loadSchedules()">Refresh</button><div id="schedulelist"></div></div></section></div></main>
-<script>
-const $=x=>document.getElementById(x);let buttons=[],templates=[],dragIndex=null;function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function api(url,opts={}){opts.headers={...(opts.headers||{}),'x-admin-secret':$('secret').value};if(opts.body&&!(opts.body instanceof FormData))opts.headers['Content-Type']='application/json';let r=await fetch(url,opts),j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok)throw Error(j.error||'Request failed');return j}
-async function connect(){try{let c=await api('/api/config');$('channels').innerHTML=c.channels.map((x,i)=>`<label style="display:block"><input class="target" type="checkbox" value="${esc(x)}" ${i===0?'checked':''} style="width:auto;margin-right:7px">${esc(x)}</label>`).join('');$('app').classList.remove('hidden');$('status').textContent='Connected';await loadTemplates();await loadAnalytics();await loadSchedules()}catch(e){$('status').textContent=e.message;alert(e.message)}}function tab(t){['compose','templates','analytics','schedules'].forEach(x=>$(x).classList.toggle('hidden',x!==t));if(t==='templates')loadTemplates();if(t==='analytics')loadAnalytics();if(t==='schedules')loadSchedules()}function targets(){return [...document.querySelectorAll('.target:checked')].map(x=>x.value)}function addButton(text='',url=''){if(buttons.length>=12)return alert('Maximum 12 buttons');buttons.push({id:crypto.randomUUID(),text,url,row:Math.floor(buttons.length/Number($('layout').value))});render()}function relayout(){buttons.forEach((b,i)=>b.row=Math.floor(i/Number($('layout').value)));render()}function render(){ $('buttons').innerHTML=buttons.map((b,i)=>`<div class="row" draggable="true" ondragstart="dragStart(${i})" ondragover="event.preventDefault()" ondrop="dropAt(${i})"><div class="drag">⠿</div><input placeholder="Button label" value="${esc(b.text)}" oninput="buttons[${i}].text=this.value;preview()"><input placeholder="https://example.com" value="${esc(b.url)}" oninput="buttons[${i}].url=this.value;preview()"><select onchange="buttons[${i}].row=+this.value;preview()">${[...new Set(buttons.map(x=>x.row))].sort((a,b)=>a-b).map(r=>`<option value="${r}" ${r===b.row?'selected':''}>Row ${r+1}</option>`).join('')}</select><button class="danger" onclick="buttons.splice(${i},1);render()">×</button></div>`).join('');preview()}function dragStart(i){dragIndex=i}function dropAt(i){if(dragIndex===null)return;let x=buttons.splice(dragIndex,1)[0];buttons.splice(i,0,x);dragIndex=null;relayout()}function preview(){$('pcaption').textContent=$('caption').value;$('pbuttons').innerHTML=[...buttons].sort((a,b)=>a.row-b.row).reduce((a,b)=>{(a[b.row]??=[]).push(b);return a},[]).map(row=>`<div style="display:grid;grid-template-columns:repeat(${Math.min(row.length,3)},1fr);gap:6px">${row.map(b=>`<div>${esc(b.text||'BUTTON')}</div>`).join('')}</div>`).join('')} $('caption').addEventListener('input',preview);$('media').addEventListener('change',()=>{let f=$('media').files[0];if(f){$('type').value=f.type.startsWith('video/')?'video':'photo';$('mediapreview').textContent=(f.type.startsWith('video/')?'🎬 ':'🖼️ ')+f.name}});function payload(){return {type:$('type').value,file_id:$('fileid').value.trim(),caption:$('caption').value,buttons,targets:targets()}}
-async function publishNow(){try{if(!targets().length)throw Error('Select at least one channel');let p=payload(),f=$('media').files[0],r;if(f){let fd=new FormData();fd.append('media',f);fd.append('post',JSON.stringify(p));r=await api('/api/upload-publish',{method:'POST',body:fd})}else{if(!p.file_id)throw Error('Choose media file or enter Telegram file_id');r=await api('/api/publish',{method:'POST',body:JSON.stringify(p)})}alert('Published successfully');loadAnalytics()}catch(e){alert('Publish failed: '+e.message)}}async function saveTemplate(){let name=prompt('Template name?');if(!name)return;try{await api('/api/templates',{method:'POST',body:JSON.stringify({name,buttons})});alert('Saved');loadTemplates()}catch(e){alert(e.message)}}async function loadTemplates(){try{templates=await api('/api/templates');$('templatelist').innerHTML=templates.length?templates.map(t=>`<div class="item"><span><b>${esc(t.name)}</b><br>${t.buttons.length} buttons</span><span><button onclick="useTemplate('${t.id}')">Use</button> <button class="danger" onclick="deleteTemplate('${t.id}')">Delete</button></span></div>`).join(''):'No templates yet'}catch(e){$('templatelist').textContent=e.message}}function useTemplate(id){let t=templates.find(x=>x.id===id);if(t){buttons=t.buttons.map((b,i)=>({...b,id:crypto.randomUUID(),row:b.row??Math.floor(i/2)}));render();tab('compose')}}async function deleteTemplate(id){try{await api('/api/templates/'+id,{method:'DELETE'});loadTemplates()}catch(e){alert(e.message)}}async function loadAnalytics(){try{let a=await api('/api/analytics');$('stats').innerHTML=`<div class="stat">Total clicks<strong>${a.totalClicks}</strong></div><div class="stat">Tracked links<strong>${a.links.length}</strong></div><div class="stat">Recent events<strong>${a.recent.length}</strong></div>`;$('links').innerHTML=a.links.length?a.links.map(x=>`<div class="item"><span><b>${esc(x.label)}</b><br><small>${esc(x.target)}</small></span><b>${x.count} clicks</b></div>`).join(''):'No links yet';$('recent').innerHTML=a.recent.slice(0,20).map(x=>`<div class="item">${esc(x.label)}<small>${new Date(x.at).toLocaleString()}</small></div>`).join('')||'No clicks yet'}catch(e){$('stats').textContent=e.message}}async function schedulePost(){try{let p=payload();if(!p.file_id)throw Error('Scheduled posts need Telegram file_id (send media to bot with /new)');if(!targets().length)throw Error('Select a channel');if(!$('when').value)throw Error('Choose date/time');p.when=new Date($('when').value).toISOString();await api('/api/schedule',{method:'POST',body:JSON.stringify(p)});alert('Scheduled');loadSchedules()}catch(e){alert(e.message)}}async function loadSchedules(){try{let a=await api('/api/schedules');$('schedulelist').innerHTML=a.length?a.map(s=>`<div class="item"><span>${esc(s.type)} · ${new Date(s.when).toLocaleString()}<br><small>${esc((s.targets||[]).join(', '))}</small></span><button class="danger" onclick="cancelSchedule('${s.id}')">Cancel</button></div>`).join(''):'No scheduled posts'}catch(e){$('schedulelist').textContent=e.message}}async function cancelSchedule(id){try{await api('/api/schedules/'+id,{method:'DELETE'});loadSchedules()}catch(e){alert(e.message)}}addButton('▶️ WATCH NOW','https://example.com/watch');addButton('🌐 WEBSITE','https://example.com');
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Telegram Media Button Pro + Blogger Auto Publisher</title>
+  <meta name="description" content="Automated Blogger to Telegram channel publisher with custom inline buttons, RSS/JSON feed syncing, media uploading, scheduling, and click tracking.">
+  <meta property="og:title" content="Telegram Media Button Pro + Blogger Auto Publisher">
+  <meta property="og:description" content="Automated Blogger to Telegram channel publisher with custom inline buttons, RSS/JSON feed syncing, media uploading, scheduling, and click tracking.">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0a1020; color: #edf2ff; font: 15px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    header { padding: 22px max(16px, calc((100% - 1100px) / 2)); background: #121c30; border-bottom: 1px solid #2a3854; }
+    header .hdr-flex { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    h1 { margin: 0; font-size: 24px; }
+    h2 { margin-top: 0; font-size: 18px; color: #cdd9ed; border-bottom: 1px solid #1e2c47; padding-bottom: 8px; }
+    h3 { margin: 14px 0 8px; font-size: 15px; color: #b8c8e2; }
+    p, .muted, .note { color: #9cacca; }
+    .wrap { max-width: 1100px; margin: auto; padding: 16px; }
+    .card { background: #121c30; border: 1px solid #293754; border-radius: 14px; padding: 18px; margin: 14px 0; }
+    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .tabs button { background: #1b263b; color: #abc0e4; border: 1px solid #2b3a55; border-radius: 9px; padding: 10px 16px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+    .tabs button.active { background: #3478f6; color: #fff; border-color: #3478f6; }
+    button { background: #3478f6; color: white; border: 0; border-radius: 8px; padding: 10px 15px; font-weight: 700; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #2563eb; }
+    button.secondary { background: #27354d; color: #d0defa; }
+    button.secondary:hover { background: #334464; }
+    button.danger { background: #b8324b; }
+    button.danger:hover { background: #962238; }
+    button.success { background: #15803d; }
+    button.success:hover { background: #166534; }
+    input, textarea, select { width: 100%; padding: 10px 12px; background: #0b1325; color: #fff; border: 1px solid #34435f; border-radius: 8px; margin: 5px 0 12px; font-size: 14px; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.25); }
+    label { font-size: 13px; color: #c2cee2; font-weight: 600; display: block; margin-top: 6px; }
+    .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 16px; }
+    .row { display: grid; grid-template-columns: 24px 1fr 1.3fr 75px 35px; gap: 6px; align-items: center; padding: 8px; background: #0b1428; border-radius: 9px; margin: 7px 0; border: 1px solid #1c2b45; }
+    .row input { margin: 0; min-width: 0; }
+    .drag { text-align: center; cursor: grab; color: #7388aa; }
+    .preview { background: #070c16; padding: 14px; border-radius: 12px; border: 1px solid #1a273e; }
+    .media { aspect-ratio: 16/9; background: #1c2b45; border-radius: 9px; display: grid; place-items: center; color: #bed0ed; overflow: hidden; background-size: cover; background-position: center; font-weight: 600; }
+    .caption { white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 0; line-height: 1.5; font-size: 14px; }
+    .pbuttons { display: grid; gap: 6px; }
+    .pbuttons div { background: #2a3d60; border-radius: 8px; padding: 10px; text-align: center; font-weight: 600; font-size: 13px; color: #eaf1fc; }
+    .statgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+    .stat { background: #0b1428; padding: 14px; border-radius: 10px; border: 1px solid #1c2b45; }
+    .stat label { margin: 0; font-size: 12px; color: #8fa2c4; font-weight: normal; }
+    .stat strong { display: block; font-size: 22px; margin-top: 4px; color: #fff; }
+    .item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid #202d45; overflow-wrap: anywhere; }
+    .hidden { display: none !important; }
+    .note { font-size: 12px; line-height: 1.5; margin: 4px 0 10px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge.green { background: #166534; color: #bbf7d0; border: 1px solid #22c55e; }
+    .badge.red { background: #7f1d1d; color: #fecaca; border: 1px solid #ef4444; }
+    .badge.blue { background: #1e3a8a; color: #bfdbfe; border: 1px solid #3b82f6; }
+    .badge.yellow { background: #713f12; color: #fef08a; border: 1px solid #eab308; }
+    .banner { padding: 12px 16px; border-radius: 9px; margin: 10px 0; font-size: 13px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #0b1428; border-left: 4px solid #3478f6; }
+    .switch-box { display: flex; align-items: center; gap: 12px; background: #0b1428; padding: 12px 14px; border-radius: 9px; border: 1px solid #23334e; margin: 10px 0; }
+    .switch-box input[type="checkbox"] { width: 20px; height: 20px; margin: 0; cursor: pointer; accent-color: #3b82f6; }
+    .sample-card { background: #0a1122; border: 1px solid #1c2b45; border-radius: 8px; padding: 10px; margin: 8px 0; display: flex; gap: 10px; align-items: flex-start; }
+    .sample-img { width: 68px; height: 50px; background: #1a273f; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+    .sample-info { font-size: 12px; overflow: hidden; }
+    .sample-info b { display: block; color: #edf2ff; margin-bottom: 3px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sample-info a { color: #60a5fa; text-decoration: none; }
+    @media(max-width: 820px) {
+      .grid { grid-template-columns: 1fr; }
+      .statgrid { grid-template-columns: 1fr 1fr; }
+      .row { grid-template-columns: 18px 1fr 1.1fr 60px 30px; gap: 4px; padding: 4px; }
+      .row input, .row select { font-size: 12px; padding: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="hdr-flex">
+      <div>
+        <h1>🎬 Telegram Media Button Pro <small style="font-size:14px;color:#60a5fa;background:#1e3052;padding:2px 8px;border-radius:6px">v3.1 + Blogger</small></h1>
+        <p>Blogger Auto-Publisher · Custom Inline Buttons · Click Analytics · Multi-channel</p>
+      </div>
+      <div>
+        <span id="header_status" class="badge blue">Connecting...</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- Admin Authentication -->
+    <div class="card" id="auth_card">
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:240px">
+          <label>Admin Secret (from ADMIN_SECRET environment variable)</label>
+          <input id="secret" type="password" placeholder="Enter secret (default: 12345)" value="12345" style="margin-bottom:0">
+        </div>
+        <div>
+          <button onclick="connect()" style="height:42px">Connect Admin</button>
+        </div>
+        <div style="padding-bottom:10px">
+          <span id="status" class="muted">Not connected</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- App Content (Visible when connected) -->
+    <div id="app" class="hidden">
+      <!-- Navigation Tabs -->
+      <nav class="tabs">
+        <button id="tab_compose" class="active" onclick="tab('compose')">📝 Manual Composer</button>
+        <button id="tab_blogger" onclick="tab('blogger')">🤖 Blogger Auto-Publisher</button>
+        <button id="tab_templates" onclick="tab('templates')">📚 Templates</button>
+        <button id="tab_analytics" onclick="tab('analytics')">📊 Click Analytics</button>
+        <button id="tab_schedules" onclick="tab('schedules')">🕐 Scheduled Posts</button>
+      </nav>
+
+      <!-- TAB 1: MANUAL COMPOSER -->
+      <section id="compose">
+        <div class="grid">
+          <div>
+            <div class="card">
+              <h2>1. Media & Destination</h2>
+              <label>Upload Photo or Video (up to 50 MB)</label>
+              <input id="media" type="file" accept="image/*,video/*">
+              <p class="note">Direct file upload publishes immediately via multipart form. For scheduled posts, enter a Telegram file_id.</p>
+
+              <label>Telegram file_id (for scheduling or bot-uploaded media)</label>
+              <input id="fileid" placeholder="AgACAgIAAxkBAAIC...">
+
+              <label>Media Type</label>
+              <select id="type">
+                <option value="video">Video</option>
+                <option value="photo">Photo</option>
+              </select>
+
+              <label>Target Channels</label>
+              <div id="channels" style="margin:6px 0 12px;background:#0b1428;padding:10px;border-radius:8px;border:1px solid #1c2b45"></div>
+
+              <label>Post Caption</label>
+              <textarea id="caption" placeholder="Write your post caption here..." rows="4"></textarea>
+            </div>
+
+            <div class="card">
+              <h2>2. Custom Inline Buttons (max 12)</h2>
+              <div id="buttons"></div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button onclick="addButton()">+ Add Button</button>
+                <button class="secondary" onclick="buttons=[];render()">Clear All</button>
+              </div>
+
+              <label style="margin-top:14px">Buttons Layout Preset</label>
+              <select id="layout" onchange="relayout()">
+                <option value="1">1 button per row (stacked)</option>
+                <option value="2" selected>2 buttons per row (grid)</option>
+                <option value="3">3 buttons per row</option>
+              </select>
+              <p class="note">Drag ⠿ to reorder. Each button destination URL will be automatically wrapped in click tracking analytics.</p>
+            </div>
+
+            <div class="card">
+              <h2>3. Publish or Schedule</h2>
+              <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button onclick="publishNow()" class="success" style="flex:1">🚀 Publish Now</button>
+                <button class="secondary" onclick="saveTemplate()">💾 Save as Template</button>
+              </div>
+
+              <hr style="border:0;border-top:1px solid #23334e;margin:18px 0">
+
+              <h3>Schedule for Later</h3>
+              <label>Future Date and Time</label>
+              <input id="when" type="datetime-local">
+              <button onclick="schedulePost()" class="secondary" style="width:100%">🕐 Schedule Post (Requires file_id)</button>
+              <p class="note">Scheduled posts will be checked and sent automatically by the background runner loop.</p>
+            </div>
+          </div>
+
+          <!-- Live Telegram Preview -->
+          <div>
+            <div class="card" style="position:sticky;top:16px">
+              <h2>Live Telegram Preview</h2>
+              <div class="preview">
+                <div id="mediapreview" class="media">▶️ Photo / Video Preview</div>
+                <div id="pcaption" class="caption"></div>
+                <div id="pbuttons" class="pbuttons"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: BLOGGER AUTO-PUBLISHER -->
+      <section id="blogger" class="hidden">
+        <!-- Status Dashboard -->
+        <div class="card" style="border-color:#3478f6">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+            <h2>🤖 Blogger to Telegram Auto-Publisher</h2>
+            <div style="display:flex;gap:8px">
+              <button class="success" onclick="syncBloggerNow()">⚡ Check & Publish Now</button>
+              <button class="secondary" onclick="testBloggerFeed()">👁️ Test Feed</button>
+              <button onclick="saveBloggerConfig()">💾 Save Settings</button>
+            </div>
+          </div>
+
+          <div class="statgrid">
+            <div class="stat">
+              <label>Automation State</label>
+              <strong id="b_stat_state"><span class="badge yellow">Loading</span></strong>
+            </div>
+            <div class="stat">
+              <label>Sync Interval</label>
+              <strong id="b_stat_interval">15 min</strong>
+            </div>
+            <div class="stat">
+              <label>Total Auto-Published</label>
+              <strong id="b_stat_total">0</strong>
+            </div>
+            <div class="stat">
+              <label>Last Checked</label>
+              <strong id="b_stat_last" style="font-size:16px;margin-top:8px">Never</strong>
+            </div>
+          </div>
+
+          <div id="b_banner" class="banner">
+            <span id="b_banner_text">Checking Blogger background engine status...</span>
+            <span id="b_banner_time" class="muted" style="font-size:11px"></span>
+          </div>
+        </div>
+
+        <div class="grid">
+          <!-- Configuration Form -->
+          <div>
+            <div class="card">
+              <h2>Configuration</h2>
+
+              <label class="switch-box">
+                <input id="b_enabled" type="checkbox" onchange="previewBlogger()">
+                <span><b>Enable Automatic Background Publishing</b><br><small class="muted">Polls feed at the interval specified below and posts new articles immediately to Telegram</small></span>
+              </label>
+
+              <label>Blogger Blog / Feed URL</label>
+              <input id="b_url" placeholder="https://yourblogname.blogspot.com" oninput="previewBlogger()">
+              <p class="note">Enter your blog homepage URL or RSS/Atom feed URL. Both standard Blogger JSON feeds and custom-domain RSS are supported.</p>
+
+              <label>Target Telegram Channel</label>
+              <input id="b_channel" placeholder="@your_channel or -100xxxxxxxx" oninput="previewBlogger()">
+              <p class="note">Ensure your Telegram bot is added as an Administrator in this channel with post permissions.</p>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                  <label>Sync Frequency</label>
+                  <select id="b_interval">
+                    <option value="1">Every 1 minute (Fast)</option>
+                    <option value="5">Every 5 minutes</option>
+                    <option value="10">Every 10 minutes</option>
+                    <option value="15" selected>Every 15 minutes (Recommended)</option>
+                    <option value="30">Every 30 minutes</option>
+                    <option value="60">Every 60 minutes</option>
+                    <option value="120">Every 2 hours</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Initial Sync Strategy</label>
+                  <select id="b_initial_policy">
+                    <option value="latest" selected>Publish newest post on start</option>
+                    <option value="future">Only publish future posts</option>
+                  </select>
+                </div>
+              </div>
+
+              <label>Dynamic "Read Full Article" Button Text</label>
+              <input id="b_btn_text" value="📖 Read Full Article" oninput="previewBlogger()">
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                  <label>Post Summary Length</label>
+                  <select id="b_summary_len" onchange="previewBlogger()">
+                    <option value="150">150 characters (Short)</option>
+                    <option value="250">250 characters</option>
+                    <option value="300" selected>300 characters (Standard)</option>
+                    <option value="450">450 characters (Detailed)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Attribution / Footer Hashtags</label>
+                  <input id="b_footer" placeholder="#Blogger #Updates @MyChannel" oninput="previewBlogger()">
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <h2>Fixed Inline Buttons</h2>
+                <button onclick="addBloggerFixedButton()">+ Add Fixed Button</button>
+              </div>
+              <p class="note">These buttons will be automatically attached to every Blogger auto-published post alongside the primary "Read Article" button (e.g. Join Channel, Visit Website, Chat Group).</p>
+              <div id="b_fixed_buttons"></div>
+            </div>
+
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <h2>Cache & History Management</h2>
+                <button class="danger" onclick="resetBloggerCache()">🔄 Clear Cache & Reset</button>
+              </div>
+              <p class="note">Resets the published articles memory so you can re-publish or test from the beginning without duplicates during ordinary operations.</p>
+            </div>
+          </div>
+
+          <!-- Preview & Feed Test -->
+          <div>
+            <div class="card" style="position:sticky;top:16px">
+              <h2>Post Preview</h2>
+              <div class="preview">
+                <div id="b_preview_img" class="media" style="background-image:url('https://images.unsplash.com/photo-1499750310107-5fef28a66643?w=800&q=80')">Blogger Article Image</div>
+                <div id="b_preview_caption" class="caption">
+                  <b>Article Title from Blogger</b><br><br>
+                  This is how your automated post summary will appear on Telegram when a new article is published on your Blogger site...<br><br>
+                  <span style="color:#60a5fa">#Blogger #Updates</span>
+                </div>
+                <div id="b_preview_buttons" class="pbuttons"></div>
+              </div>
+
+              <div id="b_test_results" style="margin-top:16px" class="hidden">
+                <h3 id="b_test_title">Feed Verification</h3>
+                <div id="b_test_list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto-Publish History Log -->
+        <div class="card">
+          <h2>Recently Auto-Published Posts</h2>
+          <div id="b_history_list"></div>
+        </div>
+      </section>
+
+      <!-- TAB 3: SAVED TEMPLATES -->
+      <section id="templates" class="hidden">
+        <div class="card">
+          <h2>Saved Button Templates</h2>
+          <div id="templatelist"></div>
+        </div>
+      </section>
+
+      <!-- TAB 4: ANALYTICS -->
+      <section id="analytics" class="hidden">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h2>Button Click Analytics</h2>
+            <button onclick="loadAnalytics()">🔄 Refresh Data</button>
+          </div>
+          <div id="stats" class="statgrid"></div>
+          <h3>Tracked Links</h3>
+          <div id="links"></div>
+          <h3>Recent Click Events</h3>
+          <div id="recent"></div>
+        </div>
+      </section>
+
+      <!-- TAB 5: SCHEDULES -->
+      <section id="schedules" class="hidden">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h2>Scheduled Posts</h2>
+            <button onclick="loadSchedules()">🔄 Refresh</button>
+          </div>
+          <div id="schedulelist"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    let buttons = [];
+    let bloggerFixedButtons = [];
+    let templates = [];
+    let dragIndex = null;
+    let bloggerData = {};
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function api(url, opts = {}) {
+      opts.headers = { ...(opts.headers || {}), 'x-admin-secret': $('secret').value };
+      if (opts.body && !(opts.body instanceof FormData)) {
+        opts.headers['Content-Type'] = 'application/json';
+      }
+      let res = await fetch(url, opts);
+      let data = await res.json().catch(() => ({ error: 'Bad JSON response' }));
+      if (!res.ok) throw new Error(data.error || 'Request failed (' + res.status + ')');
+      return data;
+    }
+
+    async function connect() {
+      try {
+        let config = await api('/api/config');
+        localStorage.setItem('admin_secret', $('secret').value);
+        $('channels').innerHTML = (config.channels || []).map((x, i) =>
+          `<label style="display:block;margin:4px 0"><input class="target" type="checkbox" value="${esc(x)}" ${i === 0 ? 'checked' : ''} style="width:auto;margin-right:8px">${esc(x)}</label>`
+        ).join('') || '<span class="muted">No channels found</span>';
+
+        $('app').classList.remove('hidden');
+        $('status').textContent = 'Connected';
+        $('status').style.color = '#4ade80';
+        $('header_status').textContent = 'Admin Connected';
+        $('header_status').className = 'badge green';
+
+        await loadBlogger();
+        await loadTemplates();
+        await loadAnalytics();
+        await loadSchedules();
+      } catch (e) {
+        $('status').textContent = e.message;
+        $('status').style.color = '#f87171';
+        $('header_status').textContent = 'Unauthorized';
+        $('header_status').className = 'badge red';
+        console.error('Connect failed:', e.message);
+      }
+    }
+
+    function tab(name) {
+      ['compose', 'blogger', 'templates', 'analytics', 'schedules'].forEach(t => {
+        const sec = $(t);
+        const btn = $('tab_' + t);
+        if (sec) sec.classList.toggle('hidden', t !== name);
+        if (btn) btn.classList.toggle('active', t !== name);
+      });
+      if (name === 'blogger') loadBlogger();
+      if (name === 'templates') loadTemplates();
+      if (name === 'analytics') loadAnalytics();
+      if (name === 'schedules') loadSchedules();
+    }
+
+    function targets() {
+      return [...document.querySelectorAll('.target:checked')].map(x => x.value);
+    }
+
+    // ==========================================
+    // MANUAL COMPOSER BUTTONS
+    // ==========================================
+
+    function addButton(text = '', url = '') {
+      if (buttons.length >= 12) return alert('Maximum 12 buttons allowed');
+      buttons.push({
+        id: crypto.randomUUID(),
+        text,
+        url,
+        row: Math.floor(buttons.length / Number($('layout').value))
+      });
+      render();
+    }
+
+    function relayout() {
+      const perRow = Number($('layout').value);
+      buttons.forEach((b, i) => b.row = Math.floor(i / perRow));
+      render();
+    }
+
+    function render() {
+      $('buttons').innerHTML = buttons.map((b, i) => `
+        <div class="row" draggable="true" ondragstart="dragStart(${i})" ondragover="event.preventDefault()" ondrop="dropAt(${i})">
+          <div class="drag">⠿</div>
+          <input placeholder="Button label" value="${esc(b.text)}" oninput="buttons[${i}].text=this.value;preview()">
+          <input placeholder="https://example.com" value="${esc(b.url)}" oninput="buttons[${i}].url=this.value;preview()">
+          <select onchange="buttons[${i}].row=+this.value;preview()">
+            ${[0, 1, 2, 3, 4, 5].map(r => `<option value="${r}" ${r === b.row ? 'selected' : ''}>Row ${r + 1}</option>`).join('')}
+          </select>
+          <button class="danger" onclick="buttons.splice(${i}, 1);render()">×</button>
+        </div>
+      `).join('');
+      preview();
+    }
+
+    function dragStart(i) { dragIndex = i; }
+    function dropAt(i) {
+      if (dragIndex === null) return;
+      let x = buttons.splice(dragIndex, 1)[0];
+      buttons.splice(i, 0, x);
+      dragIndex = null;
+      relayout();
+    }
+
+    function preview() {
+      $('pcaption').textContent = $('caption').value || 'Post caption preview will appear here...';
+      const rows = {};
+      buttons.forEach(b => (rows[b.row] ??= []).push(b));
+      $('pbuttons').innerHTML = Object.keys(rows).sort((a, b) => a - b).map(r => {
+        const row = rows[r];
+        return `<div style="display:grid;grid-template-columns:repeat(${Math.min(row.length, 3)}, 1fr);gap:6px">
+          ${row.map(b => `<div>${esc(b.text || 'BUTTON')}</div>`).join('')}
+        </div>`;
+      }).join('');
+    }
+
+    $('caption').addEventListener('input', preview);
+    $('media').addEventListener('change', () => {
+      let f = $('media').files[0];
+      if (f) {
+        $('type').value = f.type.startsWith('video/') ? 'video' : 'photo';
+        $('mediapreview').textContent = (f.type.startsWith('video/') ? '🎬 Video: ' : '🖼️ Photo: ') + f.name;
+      }
+    });
+
+    function payload() {
+      return {
+        type: $('type').value,
+        file_id: $('fileid').value.trim(),
+        caption: $('caption').value,
+        buttons,
+        targets: targets()
+      };
+    }
+
+    async function publishNow() {
+      try {
+        if (!targets().length) throw Error('Select at least one destination channel');
+        let p = payload(), f = $('media').files[0], res;
+        if (f) {
+          let fd = new FormData();
+          fd.append('media', f);
+          fd.append('post', JSON.stringify(p));
+          res = await api('/api/upload-publish', { method: 'POST', body: fd });
+        } else {
+          if (!p.file_id) throw Error('Please choose a media file to upload or enter a Telegram file_id');
+          res = await api('/api/publish', { method: 'POST', body: JSON.stringify(p) });
+        }
+        alert('Published successfully to channel(s)! Message ID: ' + (res.message_id || 'OK'));
+        loadAnalytics();
+      } catch (e) {
+        alert('Publish failed: ' + e.message);
+      }
+    }
+
+    async function saveTemplate() {
+      let name = prompt('Enter a name for this button template:');
+      if (!name) return;
+      try {
+        await api('/api/templates', { method: 'POST', body: JSON.stringify({ name, buttons }) });
+        alert('Template saved!');
+        loadTemplates();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    async function loadTemplates() {
+      try {
+        templates = await api('/api/templates');
+        $('templatelist').innerHTML = templates.length ? templates.map(t => `
+          <div class="item">
+            <span><b>${esc(t.name)}</b><br><small class="muted">${t.buttons.length} inline buttons</small></span>
+            <span>
+              <button onclick="useTemplate('${t.id}')">Use</button>
+              <button class="danger" onclick="deleteTemplate('${t.id}')">Delete</button>
+            </span>
+          </div>
+        `).join('') : '<p class="muted">No saved templates yet.</p>';
+      } catch (e) {
+        $('templatelist').textContent = e.message;
+      }
+    }
+
+    function useTemplate(id) {
+      let t = templates.find(x => x.id === id);
+      if (t) {
+        buttons = t.buttons.map((b, i) => ({ ...b, id: crypto.randomUUID(), row: b.row ?? Math.floor(i / 2) }));
+        render();
+        tab('compose');
+      }
+    }
+
+    async function deleteTemplate(id) {
+      if (!confirm('Delete this template?')) return;
+      try {
+        await api('/api/templates/' + id, { method: 'DELETE' });
+        loadTemplates();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    async function loadAnalytics() {
+      try {
+        let a = await api('/api/analytics');
+        $('stats').innerHTML = `
+          <div class="stat"><label>Total Clicks</label><strong>${a.totalClicks}</strong></div>
+          <div class="stat"><label>Tracked Links</label><strong>${a.links.length}</strong></div>
+          <div class="stat"><label>Recent Events</label><strong>${a.recent.length}</strong></div>
+          <div class="stat"><label>Active Campaign</label><strong>Active</strong></div>
+        `;
+        $('links').innerHTML = a.links.length ? a.links.map(x => `
+          <div class="item">
+            <span><b>${esc(x.label)}</b><br><small class="muted">${esc(x.target)}</small></span>
+            <b style="color:#60a5fa">${x.count} clicks</b>
+          </div>
+        `).join('') : '<p class="muted">No tracked link clicks yet.</p>';
+        $('recent').innerHTML = a.recent.slice(0, 25).map(x => `
+          <div class="item">
+            <span>${esc(x.label)}</span>
+            <small class="muted">${new Date(x.at).toLocaleString()}</small>
+          </div>
+        `).join('') || '<p class="muted">No recent click events recorded.</p>';
+      } catch (e) {
+        $('stats').textContent = e.message;
+      }
+    }
+
+    async function schedulePost() {
+      try {
+        let p = payload();
+        if (!p.file_id) throw Error('Scheduled posts require a Telegram file_id (upload to your bot via /new first)');
+        if (!targets().length) throw Error('Select at least one destination channel');
+        if (!$('when').value) throw Error('Select a future date and time');
+        p.when = new Date($('when').value).toISOString();
+        await api('/api/schedule', { method: 'POST', body: JSON.stringify(p) });
+        alert('Post scheduled successfully!');
+        loadSchedules();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    async function loadSchedules() {
+      try {
+        let list = await api('/api/schedules');
+        $('schedulelist').innerHTML = list.length ? list.map(s => `
+          <div class="item">
+            <span>
+              <b>${esc(s.type.toUpperCase())}</b> · Scheduled for: ${new Date(s.when).toLocaleString()}<br>
+              <small class="muted">Channels: ${esc((s.targets || []).join(', '))}</small>
+            </span>
+            <button class="danger" onclick="cancelSchedule('${s.id}')">Cancel</button>
+          </div>
+        `).join('') : '<p class="muted">No scheduled posts pending.</p>';
+      } catch (e) {
+        $('schedulelist').textContent = e.message;
+      }
+    }
+
+    async function cancelSchedule(id) {
+      try {
+        await api('/api/schedules/' + id, { method: 'DELETE' });
+        loadSchedules();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    // ==========================================
+    // BLOGGER AUTO-PUBLISHER FUNCTIONS
+    // ==========================================
+
+    async function loadBlogger() {
+      try {
+        let res = await api('/api/blogger/config');
+        bloggerData = res.blogger || {};
+
+        $('b_enabled').checked = Boolean(bloggerData.enabled);
+        $('b_url').value = bloggerData.url || '';
+        $('b_channel').value = bloggerData.channelId || '';
+        $('b_interval').value = String(bloggerData.intervalMinutes || 15);
+        $('b_btn_text').value = bloggerData.readButtonText || '📖 Read Full Article';
+        $('b_summary_len').value = String(bloggerData.summaryLength || 300);
+        $('b_footer').value = bloggerData.footerText || '';
+        $('b_initial_policy').value = bloggerData.initialPolicy || 'latest';
+
+        bloggerFixedButtons = Array.isArray(bloggerData.fixedButtons) ? bloggerData.fixedButtons : [];
+        renderBloggerFixedButtons();
+
+        // Update dashboard status cards
+        $('b_stat_state').innerHTML = bloggerData.enabled
+          ? '<span class="badge green">🟢 Active</span>'
+          : '<span class="badge yellow">⏸️ Disabled</span>';
+        $('b_stat_interval').textContent = (bloggerData.intervalMinutes || 15) + ' min';
+        $('b_stat_total').textContent = bloggerData.totalPublished || 0;
+        $('b_stat_last').textContent = bloggerData.lastSync ? new Date(bloggerData.lastSync).toLocaleTimeString() : 'Never';
+
+        if (bloggerData.lastError) {
+          $('b_banner').style.borderLeftColor = '#ef4444';
+          $('b_banner_text').innerHTML = '⚠️ <span style="color:#f87171">Error: ' + esc(bloggerData.lastError) + '</span>';
+        } else {
+          $('b_banner').style.borderLeftColor = bloggerData.enabled ? '#22c55e' : '#3478f6';
+          $('b_banner_text').textContent = 'Status: ' + (bloggerData.lastStatus || 'Ready');
+        }
+        $('b_banner_time').textContent = bloggerData.lastSync ? new Date(bloggerData.lastSync).toLocaleString() : '';
+
+        // Render History
+        renderBloggerHistory(bloggerData.history || []);
+        previewBlogger();
+      } catch (e) {
+        console.error('Failed to load Blogger config:', e);
+      }
+    }
+
+    function renderBloggerFixedButtons() {
+      $('b_fixed_buttons').innerHTML = bloggerFixedButtons.map((b, i) => `
+        <div class="row">
+          <div class="drag">📌</div>
+          <input placeholder="Button label" value="${esc(b.text)}" oninput="bloggerFixedButtons[${i}].text=this.value;previewBlogger()">
+          <input placeholder="https://t.me/yourchannel" value="${esc(b.url)}" oninput="bloggerFixedButtons[${i}].url=this.value;previewBlogger()">
+          <select onchange="bloggerFixedButtons[${i}].row=+this.value;previewBlogger()">
+            <option value="1" ${b.row === 1 ? 'selected' : ''}>Row 2</option>
+            <option value="2" ${b.row === 2 ? 'selected' : ''}>Row 3</option>
+            <option value="3" ${b.row === 3 ? 'selected' : ''}>Row 4</option>
+          </select>
+          <button class="danger" onclick="bloggerFixedButtons.splice(${i}, 1);renderBloggerFixedButtons();previewBlogger()">×</button>
+        </div>
+      `).join('') || '<p class="muted" style="padding:10px 0">No fixed buttons added. Click "+ Add Fixed Button" to add buttons like Join Channel or Website.</p>';
+      previewBlogger();
+    }
+
+    function addBloggerFixedButton() {
+      if (bloggerFixedButtons.length >= 8) return alert('Maximum 8 fixed buttons');
+      bloggerFixedButtons.push({
+        id: crypto.randomUUID(),
+        text: '📢 Join Channel',
+        url: 'https://t.me/telegram',
+        row: Math.floor(bloggerFixedButtons.length / 2) + 1
+      });
+      renderBloggerFixedButtons();
+    }
+
+    function previewBlogger() {
+      const title = 'Sample Blogger Article Headline';
+      const readText = $('b_btn_text').value || '📖 Read Full Article';
+      const footer = $('b_footer').value.trim();
+      const len = Number($('b_summary_len').value || 300);
+
+      let summary = 'This is an automated preview of how your Blogger article summary will appear. The publisher extracts clean text without HTML, and includes a direct button linking to the article along with any custom fixed buttons...';
+      if (summary.length > len) summary = summary.slice(0, len) + '...';
+
+      let caption = `<b>${esc(title)}</b><br><br>${esc(summary)}`;
+      if (footer) caption += `<br><br><span style="color:#60a5fa">${esc(footer)}</span>`;
+      $('b_preview_caption').innerHTML = caption;
+
+      // Group buttons
+      const rows = {};
+      // Row 0 is the dynamic read article button
+      (rows[0] ??= []).push({ text: readText });
+      // Fixed buttons
+      bloggerFixedButtons.forEach(b => {
+        const r = Math.max(1, Number(b.row || 1));
+        (rows[r] ??= []).push(b);
+      });
+
+      $('b_preview_buttons').innerHTML = Object.keys(rows).sort((a, b) => a - b).map(r => {
+        const row = rows[r];
+        return `<div style="display:grid;grid-template-columns:repeat(${Math.min(row.length, 2)}, 1fr);gap:6px">
+          ${row.map(b => `<div style="${r === '0' ? 'background:#3478f6;font-weight:700' : ''}">${esc(b.text || 'BUTTON')}</div>`).join('')}
+        </div>`;
+      }).join('');
+    }
+
+    async function saveBloggerConfig() {
+      try {
+        const payload = {
+          enabled: $('b_enabled').checked,
+          url: $('b_url').value.trim(),
+          channelId: $('b_channel').value.trim(),
+          intervalMinutes: Number($('b_interval').value || 15),
+          readButtonText: $('b_btn_text').value.trim(),
+          summaryLength: Number($('b_summary_len').value || 300),
+          footerText: $('b_footer').value.trim(),
+          initialPolicy: $('b_initial_policy').value,
+          fixedButtons: bloggerFixedButtons
+        };
+
+        if (payload.enabled && !payload.url) {
+          throw new Error('Please enter a Blogger URL to enable automation');
+        }
+
+        let res = await api('/api/blogger/config', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        alert('Blogger Auto-Publisher settings saved successfully!');
+        await loadBlogger();
+      } catch (e) {
+        alert('Save failed: ' + e.message);
+      }
+    }
+
+    async function testBloggerFeed() {
+      const url = $('b_url').value.trim();
+      if (!url) return alert('Enter a Blogger URL to test');
+
+      $('b_test_results').classList.remove('hidden');
+      $('b_test_title').textContent = 'Testing feed connection...';
+      $('b_test_list').innerHTML = '<p class="muted">Fetching and verifying Blogger feed...</p>';
+
+      try {
+        let res = await api('/api/blogger/test', {
+          method: 'POST',
+          body: JSON.stringify({ url })
+        });
+
+        $('b_test_title').innerHTML = `✅ ${esc(res.blogTitle)} <small class="muted">(${res.source} · ${res.itemsCount} posts detected)</small>`;
+        $('b_test_list').innerHTML = res.sampleItems.map(p => `
+          <div class="sample-card">
+            ${p.imageUrl ? `<img src="${esc(p.imageUrl)}" class="sample-img" alt="thumb">` : '<div class="sample-img" style="display:grid;place-items:center;font-size:10px;color:#8899b5">No Img</div>'}
+            <div class="sample-info">
+              <b>${esc(p.title)}</b>
+              <div class="muted">${esc(p.summary.slice(0, 110))}...</div>
+              <a href="${esc(p.link)}" target="_blank" rel="noopener">🔗 View Original Post</a>
+            </div>
+          </div>
+        `).join('') || '<p class="muted">No posts found in feed.</p>';
+
+        if (res.sampleItems[0] && res.sampleItems[0].imageUrl) {
+          $('b_preview_img').style.backgroundImage = `url('${res.sampleItems[0].imageUrl}')`;
+        }
+      } catch (e) {
+        $('b_test_title').textContent = '❌ Feed Test Failed';
+        $('b_test_list').innerHTML = `<p style="color:#f87171">Error: ${esc(e.message)}</p><p class="note">Check that your Blogger blog is public and the URL is spelled correctly (e.g. https://yourblog.blogspot.com).</p>`;
+      }
+    }
+
+    async function syncBloggerNow() {
+      try {
+        $('b_banner_text').textContent = '⚡ Checking Blogger feed and publishing new posts...';
+        let res = await api('/api/blogger/sync', { method: 'POST' });
+        if (!res.ok) {
+          throw new Error(res.error || res.message || 'Sync failed');
+        }
+        alert(`Sync Complete!\nFound: ${res.found || 0} posts\nPublished: ${res.published || 0} new posts\nStatus: ${res.message || 'OK'}`);
+        await loadBlogger();
+        await loadAnalytics();
+      } catch (e) {
+        alert('Manual sync failed: ' + e.message);
+        await loadBlogger();
+      }
+    }
+
+    async function resetBloggerCache() {
+      if (!confirm('Are you sure you want to clear the published articles cache? This allows you to test initial sync again.')) return;
+      try {
+        await api('/api/blogger/reset-cache', { method: 'POST' });
+        alert('Cache cleared!');
+        await loadBlogger();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    function renderBloggerHistory(list = []) {
+      if (!list.length) {
+        $('b_history_list').innerHTML = '<p class="muted">No posts auto-published yet. Posts published by the background runner or manual sync will appear here.</p>';
+        return;
+      }
+      $('b_history_list').innerHTML = list.map(item => `
+        <div class="item">
+          <div>
+            <b>${esc(item.title)}</b><br>
+            <small class="muted">Published to: ${esc(item.channel || 'Channel')} · Msg ID: #${esc(item.telegramMessageId || 'N/A')} · ${new Date(item.at).toLocaleString()}</small>
+          </div>
+          <div>
+            <a href="${esc(item.url)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;font-size:13px;font-weight:600">🔗 Open Post</a>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Default buttons for composer
+    addButton('▶️ WATCH NOW', 'https://example.com/watch');
+    addButton('🌐 WEBSITE', 'https://example.com');
+
+    // Retain saved secret and auto-connect
+    if (localStorage.getItem('admin_secret')) {
+      $('secret').value = localStorage.getItem('admin_secret');
+    }
+    if ($('secret').value) {
+      connect().catch(() => {});
+    }
+  </script>
+</body>
+</html>
