@@ -79,6 +79,80 @@ function save() {
   fs.renameSync(tmp, DB);
 }
 
+function resolveDirectUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  let current = url.trim();
+  // Unwrap nested /r/ tracking URLs if they exist in legacy data
+  for (let i = 0; i < 5; i++) {
+    const match = current.match(/\/r\/([a-zA-Z0-9_-]+)/);
+    if (match && match[1] && db && db.clicks && db.clicks[match[1]] && db.clicks[match[1]].target) {
+      current = db.clicks[match[1]].target.trim();
+    } else {
+      break;
+    }
+  }
+  return current;
+}
+
+function sanitizeDatabaseUrls() {
+  let changed = false;
+
+  // 1. Sanitize button templates
+  if (db.templates && typeof db.templates === 'object') {
+    for (const t of Object.values(db.templates)) {
+      if (Array.isArray(t.buttons)) {
+        for (const b of t.buttons) {
+          if (b && b.url) {
+            const clean = resolveDirectUrl(b.url);
+            if (clean !== b.url) {
+              b.url = clean;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Sanitize scheduled posts
+  if (db.schedules && typeof db.schedules === 'object') {
+    for (const s of Object.values(db.schedules)) {
+      if (Array.isArray(s.buttons)) {
+        for (const b of s.buttons) {
+          if (b && b.url) {
+            const clean = resolveDirectUrl(b.url);
+            if (clean !== b.url) {
+              b.url = clean;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Sanitize blogger fixed buttons
+  if (db.blogger && Array.isArray(db.blogger.fixedButtons)) {
+    for (const b of db.blogger.fixedButtons) {
+      if (b && b.url) {
+        const clean = resolveDirectUrl(b.url);
+        if (clean !== b.url) {
+          b.url = clean;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (changed) {
+    console.log('[AI Studio] Cleaned legacy redirect URLs from database');
+    save();
+  }
+}
+
+// Sanitize legacy stored URLs immediately upon load
+sanitizeDatabaseUrls();
+
 const upload = multer({
   dest: UP,
   limits: { fileSize: 50 * 1024 * 1024 },
@@ -97,26 +171,33 @@ const validUrl = u => typeof u === 'string' && /^https?:\/\//i.test(u.trim());
 function buttonsSafe(arr = []) {
   return (Array.isArray(arr) ? arr : [])
     .slice(0, 12)
-    .filter(b => b && String(b.text || '').trim() && validUrl(b.url))
-    .map((b, i) => ({
-      id: String(b.id || crypto.randomUUID()),
-      text: String(b.text).trim().slice(0, 40),
-      url: b.url.trim(),
-      row: Math.max(0, Math.min(20, Number(b.row ?? Math.floor(i / 2))))
-    }));
+    .map((b, i) => {
+      if (!b) return null;
+      const cleanUrl = resolveDirectUrl(b.url);
+      const text = String(b.text || '').trim().slice(0, 40);
+      if (!text || !validUrl(cleanUrl)) return null;
+      return {
+        id: String(b.id || crypto.randomUUID()),
+        text,
+        url: cleanUrl,
+        row: Math.max(0, Math.min(20, Number(b.row ?? Math.floor(i / 2))))
+      };
+    })
+    .filter(Boolean);
 }
 
 function keyboard(arr) {
-  if (!arr.length) return undefined;
-  const base = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '') || `http://localhost:${PORT}`;
+  if (!arr || !arr.length) return undefined;
   const rows = {};
   for (const b of arr) {
-    const id = crypto.randomUUID();
-    db.clicks[id] = { id, label: b.text, target: b.url, count: 0, createdAt: new Date().toISOString() };
-    (rows[b.row] ??= []).push(Markup.button.url(b.text, `${base}/r/${id}`));
+    const directUrl = resolveDirectUrl(b.url);
+    if (!validUrl(directUrl)) continue;
+    const r = Math.max(0, Math.min(20, Number(b.row ?? 0)));
+    (rows[r] ??= []).push(Markup.button.url(b.text, directUrl));
   }
-  save();
-  return Markup.inlineKeyboard(Object.keys(rows).sort((a, b) => a - b).map(k => rows[k]));
+  return Object.keys(rows).length
+    ? Markup.inlineKeyboard(Object.keys(rows).sort((a, b) => a - b).map(k => rows[k]))
+    : undefined;
 }
 
 async function publish(p, file) {
@@ -155,39 +236,26 @@ async function publish(p, file) {
 // ==========================================
 
 function bloggerKeyboard(post, fixedButtons = [], readButtonText = '📖 Read Full Article') {
-  const base = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '') || `http://localhost:${PORT}`;
   const rows = {};
 
-  // Dynamic button linking to original post (tracked in analytics)
-  const trackId = crypto.randomUUID();
-  db.clicks[trackId] = {
-    id: trackId,
-    label: `${readButtonText}: ${post.title.slice(0, 35)}`,
-    target: post.link,
-    count: 0,
-    createdAt: new Date().toISOString()
-  };
-  (rows[0] ??= []).push(Markup.button.url(readButtonText, `${base}/r/${trackId}`));
-
-  // Fixed inline buttons configured by user
-  for (const b of (fixedButtons || [])) {
-    if (!b || !b.text || !b.url || !validUrl(b.url)) continue;
-    const r = Math.max(1, Math.min(10, Number(b.row || 1)));
-    const btnTrackId = crypto.randomUUID();
-    db.clicks[btnTrackId] = {
-      id: btnTrackId,
-      label: b.text,
-      target: b.url,
-      count: 0,
-      createdAt: new Date().toISOString()
-    };
-    (rows[r] ??= []).push(Markup.button.url(b.text, `${base}/r/${btnTrackId}`));
+  // 1. Dynamic button linking directly to the original Blogger post URL
+  const articleUrl = resolveDirectUrl(post.link);
+  if (validUrl(articleUrl)) {
+    (rows[0] ??= []).push(Markup.button.url(readButtonText || '📖 Read Full Article', articleUrl));
   }
 
-  save();
-  return Markup.inlineKeyboard(
-    Object.keys(rows).sort((a, b) => a - b).map(k => rows[k])
-  );
+  // 2. Fixed inline buttons linking directly to their destination URLs
+  for (const b of (fixedButtons || [])) {
+    if (!b || !b.text) continue;
+    const directUrl = resolveDirectUrl(b.url);
+    if (!validUrl(directUrl)) continue;
+    const r = Math.max(1, Math.min(10, Number(b.row || 1)));
+    (rows[r] ??= []).push(Markup.button.url(String(b.text).trim().slice(0, 40), directUrl));
+  }
+
+  return Object.keys(rows).length
+    ? Markup.inlineKeyboard(Object.keys(rows).sort((a, b) => a - b).map(k => rows[k]))
+    : undefined;
 }
 
 async function publishBloggerPost(post) {
@@ -608,16 +676,22 @@ app.post('/api/blogger/config', auth, (req, res) => {
     db.blogger.footerText = String(b.footerText || '').trim().slice(0, 200);
     db.blogger.initialPolicy = ['latest', 'future'].includes(b.initialPolicy) ? b.initialPolicy : 'latest';
 
-    // Validate and sanitize fixedButtons
+    // Validate and sanitize fixedButtons to ensure direct destination URLs only
     if (Array.isArray(b.fixedButtons)) {
       db.blogger.fixedButtons = b.fixedButtons
-        .filter(btn => btn && String(btn.text || '').trim() && validUrl(btn.url))
-        .map((btn, idx) => ({
-          id: String(btn.id || crypto.randomUUID()),
-          text: String(btn.text).trim().slice(0, 40),
-          url: btn.url.trim(),
-          row: Math.max(1, Math.min(10, Number(btn.row ?? (Math.floor(idx / 2) + 1))))
-        }));
+        .map((btn, idx) => {
+          if (!btn) return null;
+          const directUrl = resolveDirectUrl(btn.url);
+          const text = String(btn.text || '').trim().slice(0, 40);
+          if (!text || !validUrl(directUrl)) return null;
+          return {
+            id: String(btn.id || crypto.randomUUID()),
+            text,
+            url: directUrl,
+            row: Math.max(1, Math.min(10, Number(btn.row ?? (Math.floor(idx / 2) + 1))))
+          };
+        })
+        .filter(Boolean);
     }
 
     if (db.blogger.channelId && !CHANNELS.includes(db.blogger.channelId)) {

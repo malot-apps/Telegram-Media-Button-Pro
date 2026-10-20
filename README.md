@@ -14,13 +14,14 @@ A production-ready Telegram channel publisher and automated Google Blogger conte
 - **Smart Duplicate Prevention**: Maintains a hash-set of published post IDs and permanent URLs to prevent duplicate publications.
 - **High-Resolution Image Extraction**: Automatically detects post thumbnails and upgrades resolution to `/s1600/`, or extracts the lead `<img>` tag from HTML content.
 - **Clean Summary Extraction**: Strips raw HTML, styles, and scripts; decodes HTML entities; and generates clean, readable summaries clamped to Telegram's 1024-character caption limits.
-- **Dynamic "Read Article" Button**: Generates a prominent inline button linking straight to the published post, automatically tracked via the internal analytics system.
-- **Configurable Fixed Inline Buttons**: Add custom inline buttons (e.g. *Join Channel*, *Visit Website*, *Community Chat*) to every auto-published post without editing any code.
+- **Dynamic "Read Article" Direct Button**: Generates a clean inline button linking directly to the original published post URL without any redirects or tracking pages.
+- **Configurable Direct Fixed Inline Buttons**: Add custom inline buttons (e.g. *Join Channel*, *Visit Website*, *Community Chat*) to every auto-published post linking directly to their destination URLs.
 - **First-Run Policy**: Choose between publishing only the single newest article on initial sync or marking existing articles as seen so only future posts are sent.
 - **Feed Testing & Live Preview**: Real-time verification tool in the Admin Panel to inspect blog post titles, images, snippets, and button layout before enabling automation.
 
 ### 2. 📝 Manual Media Composer
 - Direct upload of photos and videos (up to 50 MB) with immediate delivery.
+- Direct destination URLs on all inline buttons (no Render redirects, tracking endpoints, or intermediate pages).
 - Support for Telegram `file_id` for zero-bandwidth forwarding or scheduled posts.
 - Drag-and-drop button reordering with 1, 2, or 3 buttons per row presets.
 - Live interactive Telegram client preview.
@@ -29,9 +30,9 @@ A production-ready Telegram channel publisher and automated Google Blogger conte
 - Save reusable button configurations and layouts.
 - One-click template application in the Composer.
 
-### 4. 📊 Click Tracking & Analytics
-- Every inline button (both manual and auto-published) can route through the built-in redirect service (`/r/:id`).
-- Real-time dashboard tracking total clicks, clicks per link, and timestamped recent events.
+### 4. 📊 Analytics & Redirect Fallback
+- Legacy `/r/:id` endpoint maintained for seamless backward-compatibility with past messages previously posted to channels.
+- Real-time dashboard showing status and click records.
 
 ### 5. 🕐 Post Scheduling
 - Schedule media posts for future dates and times using Telegram `file_id`.
@@ -53,7 +54,7 @@ A production-ready Telegram channel publisher and automated Google Blogger conte
 | `CHANNEL_ID` | Yes | Default channel username or numeric ID (must start with `-100` if numeric) | `-1003980723831` or `@mychannel` |
 | `ADMIN_SECRET` | Yes | Password for Admin Panel access | `your_secure_password_123` |
 | `ADMIN_IDS` | Yes | Comma-separated numeric Telegram user IDs of allowed administrators | `2145249187,987654321` |
-| `PUBLIC_BASE_URL`| Yes | Full public HTTPS URL of your deployment (used for button click tracking redirects) | `https://your-service.onrender.com` |
+| `PUBLIC_BASE_URL`| Optional | Public HTTPS URL of your deployment (used for webhook / backward-compatible redirects) | `https://your-service.onrender.com` |
 | `BLOGGER_URL` | Optional | Default Blogger site or feed URL (can also be configured via Admin Panel) | `https://yourblog.blogspot.com` |
 | `CHANNELS` | Optional | Comma-separated list of additional channel IDs permitted for publishing | `-1001111111111,@channel2` |
 | `PORT` | Optional | Web server port (defaults to 3000) | `3000` |
