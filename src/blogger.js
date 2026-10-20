@@ -2,13 +2,13 @@ const Parser = require('rss-parser');
 
 const rssParser = new Parser({
   headers: {
-    'User-Agent': 'Mozilla/5.0 (compatible; TelegramBloggerAutoPublisher/3.0; +https://telegram.org)'
+    'User-Agent': 'Mozilla/5.0 (compatible; TelegramBloggerAutoPublisher/3.1; +https://telegram.org)'
   },
   timeout: 12000
 });
 
 /**
- * Strips HTML tags, removes styles/scripts, decodes common entities and trims text.
+ * Strips HTML tags, removes styles/scripts, decodes common entities and trims text neatly.
  */
 function cleanHtml(rawHtml = '', maxLength = 300) {
   if (!rawHtml || typeof rawHtml !== 'string') return '';
@@ -25,16 +25,21 @@ function cleanHtml(rawHtml = '', maxLength = 300) {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&hellip;/gi, '...')
-    .replace(/&#8217;/gi, "'")
-    .replace(/&#8220;/gi, '"')
-    .replace(/&#8221;/gi, '"')
-    .replace(/&#8211;/gi, '-')
-    .replace(/&#8212;/gi, '--')
+    .replace(/&#8216;|&#8217;/g, "'")
+    .replace(/&#8220;|&#8221;/g, '"')
+    .replace(/&#8211;/g, '-')
+    .replace(/&#8212;/g, '--')
     .replace(/\s+/g, ' ')
     .trim();
 
   if (maxLength && text.length > maxLength) {
-    text = text.slice(0, maxLength).trim() + '...';
+    const cut = text.slice(0, maxLength);
+    const lastSpace = cut.lastIndexOf(' ');
+    if (lastSpace > maxLength * 0.7) {
+      text = cut.slice(0, lastSpace).trim() + '...';
+    } else {
+      text = cut.trim() + '...';
+    }
   }
   return text;
 }
@@ -50,13 +55,12 @@ function escapeTelegramHtml(str = '') {
 }
 
 /**
- * Extracts the highest resolution image URL from Blogger entry or HTML snippet.
+ * Extracts and upgrades the highest resolution image URL from Blogger entry or HTML snippet.
  */
 function extractBloggerImage(entry = {}, contentHtml = '') {
-  // Check media$thumbnail
+  // 1. Check media$thumbnail (Blogger JSON)
   if (entry.media$thumbnail && entry.media$thumbnail.url) {
-    let thumb = entry.media$thumbnail.url;
-    // Upgrade low-res thumbnail (/s72-c/, /w72-h72-p-k-no-nu/, /s72-w.../) to full high-res /s1600/
+    let thumb = String(entry.media$thumbnail.url).replace(/&amp;/g, '&');
     thumb = thumb
       .replace(/\/s[0-9]+(-[a-zA-Z0-9_-]+)?\//, '/s1600/')
       .replace(/\/w[0-9]+-h[0-9]+[^/]*\//, '/s1600/');
@@ -65,17 +69,25 @@ function extractBloggerImage(entry = {}, contentHtml = '') {
     }
   }
 
-  // Check enclosures or media
+  // 2. Check RSS media:thumbnail or thumbnail property
+  const mediaThumb = entry['media:thumbnail']?.$?.url || entry['media:content']?.$?.url || entry.thumbnail;
+  if (mediaThumb && /^https?:\/\//i.test(mediaThumb)) {
+    let thumb = String(mediaThumb).replace(/&amp;/g, '&')
+      .replace(/\/s[0-9]+(-[a-zA-Z0-9_-]+)?\//, '/s1600/')
+      .replace(/\/w[0-9]+-h[0-9]+[^/]*\//, '/s1600/');
+    return thumb;
+  }
+
+  // 3. Check enclosures
   if (entry.enclosure && entry.enclosure.url && /^https?:\/\//i.test(entry.enclosure.url)) {
     return entry.enclosure.url;
   }
 
-  // Scan HTML content for first image
+  // 4. Scan HTML content for first <img> tag
   const htmlToSearch = (entry.content && entry.content.$t) || contentHtml || (typeof entry.content === 'string' ? entry.content : '') || '';
   const match = htmlToSearch.match(/<img[^>]+src=["'](https?:\/\/[^"'\s>]+)["']/i);
   if (match && match[1]) {
-    // If it's a blogger image with small size tag, upgrade it
-    let img = match[1];
+    let img = match[1].replace(/&amp;/g, '&');
     img = img
       .replace(/\/s[0-9]+(-[a-zA-Z0-9_-]+)?\//, '/s1600/')
       .replace(/\/w[0-9]+-h[0-9]+[^/]*\//, '/s1600/');
@@ -119,7 +131,7 @@ async function fetchBloggerFeed(rawUrl) {
     const res = await fetch(jsonFeedUrl, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBloggerAutoPublisher/3.0)'
+        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBloggerAutoPublisher/3.1)'
       },
       signal: AbortSignal.timeout(10000)
     });
@@ -159,11 +171,10 @@ async function fetchBloggerFeed(rawUrl) {
       }
     }
   } catch (jsonErr) {
-    // Continue to RSS fallback
     console.log('[Blogger Parser] JSON feed attempt failed, falling back to RSS:', jsonErr.message);
   }
 
-  // Fallback 1: Standard RSS URL
+  // Fallback: Standard RSS/Atom URLs
   const rssCandidates = [
     base.includes('/feeds/') ? base : `${base}/feeds/posts/default?alt=rss`,
     base.includes('/feeds/') ? base : `${base}/feeds/posts/default`,

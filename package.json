@@ -6,7 +6,8 @@
     "dev": "node src/index.js",
     "build": "echo 'Build successful'",
     "start": "node src/index.js",
-    "lint": "node --check src/index.js && node --check src/blogger.js"
+    "lint": "node --check src/index.js && node --check src/blogger.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

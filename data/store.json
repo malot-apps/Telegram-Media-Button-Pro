@@ -13,6 +13,15 @@
       "target": "https://t.me/telegram",
       "count": 0,
       "createdAt": "2026-10-20T02:56:06.790Z"
+    },
+    "test-uuid-1": {
+      "id": "test-uuid-1",
+      "label": "Old Redirect Link",
+      "target": "https://original-destination.com/article"
+    },
+    "redirect-abc": {
+      "id": "redirect-abc",
+      "target": "https://clean-site.org/home"
     }
   },
   "events": [
@@ -23,8 +32,38 @@
       "at": "2026-10-20T02:56:33.843Z"
     }
   ],
-  "schedules": {},
-  "templates": {},
+  "schedules": {
+    "sch-1": {
+      "id": "sch-1",
+      "type": "photo",
+      "file_id": "AgACtest",
+      "buttons": [
+        {
+          "text": "Visit",
+          "url": "https://clean-site.org/home",
+          "row": 0
+        }
+      ]
+    }
+  },
+  "templates": {
+    "tpl-1": {
+      "id": "tpl-1",
+      "name": "Old Template",
+      "buttons": [
+        {
+          "text": "Click Here",
+          "url": "https://clean-site.org/home",
+          "row": 0
+        },
+        {
+          "text": "Already Direct",
+          "url": "https://direct-site.com",
+          "row": 0
+        }
+      ]
+    }
+  },
   "blogger": {
     "enabled": true,
     "url": "https://googleblog.blogspot.com",
@@ -36,14 +75,13 @@
     "initialPolicy": "latest",
     "fixedButtons": [
       {
-        "id": "c5916965-a2eb-4260-95c0-33196e5b1402",
-        "text": "📢 Official Channel",
-        "url": "https://t.me/telegram",
+        "text": "Old Button",
+        "url": "https://clean-site.org/home",
         "row": 1
       }
     ],
-    "lastSync": "2026-10-20T02:56:19.130Z",
-    "lastStatus": "Checked at 2:56:19 AM: Everything up to date (15 posts checked)",
+    "lastSync": "2026-10-20T03:49:46.898Z",
+    "lastStatus": "Checked at 3:49:46 AM: Everything up to date (15 posts checked)",
     "lastError": null,
     "totalPublished": 1,
     "publishedIds": [

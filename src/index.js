@@ -317,6 +317,32 @@ async function publishBloggerPost(post) {
   return sent;
 }
 
+function isPostPublished(post) {
+  if (!post || !db.blogger || !Array.isArray(db.blogger.publishedIds)) return false;
+  const pId = String(post.id || '').trim();
+  const pLink = String(post.link || '').trim();
+  return Boolean(
+    (pId && db.blogger.publishedIds.includes(pId)) ||
+    (pLink && db.blogger.publishedIds.includes(pLink))
+  );
+}
+
+function markPostAsPublished(post) {
+  if (!post || !db.blogger) return;
+  if (!Array.isArray(db.blogger.publishedIds)) db.blogger.publishedIds = [];
+  const pId = String(post.id || '').trim();
+  const pLink = String(post.link || '').trim();
+  if (pId && !db.blogger.publishedIds.includes(pId)) {
+    db.blogger.publishedIds.push(pId);
+  }
+  if (pLink && !db.blogger.publishedIds.includes(pLink)) {
+    db.blogger.publishedIds.push(pLink);
+  }
+  if (db.blogger.publishedIds.length > 2000) {
+    db.blogger.publishedIds = db.blogger.publishedIds.slice(-2000);
+  }
+}
+
 let isSyncingBlogger = false;
 async function checkAndPublishBlogger(force = false) {
   if (isSyncingBlogger) {
@@ -351,7 +377,7 @@ async function checkAndPublishBlogger(force = false) {
     // Initial run check
     if (db.blogger.publishedIds.length === 0) {
       if (db.blogger.initialPolicy === 'future') {
-        db.blogger.publishedIds = feed.items.map(it => it.id || it.link);
+        feed.items.forEach(it => markPostAsPublished(it));
         db.blogger.lastSync = new Date().toISOString();
         db.blogger.lastStatus = `Initial sync: marked ${feed.items.length} existing posts as seen. Waiting for new posts.`;
         db.blogger.lastError = null;
@@ -359,7 +385,7 @@ async function checkAndPublishBlogger(force = false) {
         return { ok: true, found: feed.items.length, published: 0, message: db.blogger.lastStatus };
       } else {
         const newest = feed.items[0];
-        db.blogger.publishedIds = feed.items.map(it => it.id || it.link);
+        feed.items.forEach(it => markPostAsPublished(it));
         const sent = await publishBloggerPost(newest);
 
         db.blogger.history.unshift({
@@ -383,10 +409,7 @@ async function checkAndPublishBlogger(force = false) {
     }
 
     // Subsequent runs: detect new posts that haven't been published yet
-    const unseenPosts = feed.items.filter(it => {
-      const key = it.id || it.link;
-      return !db.blogger.publishedIds.includes(key);
-    });
+    const unseenPosts = feed.items.filter(it => !isPostPublished(it));
 
     if (!unseenPosts.length) {
       db.blogger.lastSync = new Date().toISOString();
@@ -396,21 +419,17 @@ async function checkAndPublishBlogger(force = false) {
       return { ok: true, found: feed.items.length, published: 0, message: 'All posts already published' };
     }
 
-    // Publish in chronological order (oldest to newest), max 5 per run
-    const toPublish = unseenPosts.reverse().slice(-5);
+    // Publish up to 5 newest unseen posts in chronological order (oldest first so newest appears at channel bottom)
+    const toPublish = unseenPosts.slice(0, 5).reverse();
     let publishedCount = 0;
 
     for (const post of toPublish) {
       try {
         const sent = await publishBloggerPost(post);
-        const key = post.id || post.link;
-        db.blogger.publishedIds.push(key);
-        if (db.blogger.publishedIds.length > 1000) {
-          db.blogger.publishedIds = db.blogger.publishedIds.slice(-1000);
-        }
+        markPostAsPublished(post);
 
         db.blogger.history.unshift({
-          id: key,
+          id: post.id || post.link,
           title: post.title,
           url: post.link,
           publishedAt: post.published,
@@ -427,12 +446,12 @@ async function checkAndPublishBlogger(force = false) {
         await new Promise(r => setTimeout(r, 1500));
       } catch (postErr) {
         console.error(`[Blogger Auto-Publisher] Failed to publish post "${post.title}":`, postErr.message);
+        db.blogger.lastError = postErr.message;
       }
     }
 
     db.blogger.lastSync = new Date().toISOString();
     db.blogger.lastStatus = `Published ${publishedCount} new post${publishedCount === 1 ? '' : 's'}`;
-    db.blogger.lastError = null;
     save();
     return { ok: true, found: feed.items.length, published: publishedCount, message: db.blogger.lastStatus };
   } catch (err) {
@@ -471,16 +490,18 @@ function setupBloggerScheduler() {
   }, intervalMs);
 }
 
-// Start scheduler on launch
-setTimeout(() => {
-  setupBloggerScheduler();
-  if (db.blogger && db.blogger.enabled && db.blogger.url) {
-    console.log('[Blogger Auto-Publisher] Running initial check in 10 seconds...');
-    setTimeout(() => {
-      checkAndPublishBlogger().catch(e => console.error('[Blogger Startup Check Error]', e.message));
-    }, 10000);
-  }
-}, 3000);
+// Start scheduler on launch if running directly as main application
+if (require.main === module) {
+  setTimeout(() => {
+    setupBloggerScheduler();
+    if (db.blogger && db.blogger.enabled && db.blogger.url) {
+      console.log('[Blogger Auto-Publisher] Running initial check in 10 seconds...');
+      setTimeout(() => {
+        checkAndPublishBlogger().catch(e => console.error('[Blogger Startup Check Error]', e.message));
+      }, 10000);
+    }
+  }, 3000);
+}
 
 // ==========================================
 // TELEGRAM BOT SETUP
@@ -553,12 +574,14 @@ if (TOKEN) {
       }
     });
 
-    bot.launch()
-      .then(() => console.log('Telegram bot running'))
-      .catch(e => console.warn('[AI Studio] Telegram bot polling warning:', e.message));
+    if (require.main === module) {
+      bot.launch()
+        .then(() => console.log('Telegram bot running'))
+        .catch(e => console.warn('[AI Studio] Telegram bot polling warning:', e.message));
 
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+      process.once('SIGINT', () => bot.stop('SIGINT'));
+      process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    }
   } catch (err) {
     console.warn('[AI Studio] Failed to start Telegraf bot:', err.message);
   }
@@ -755,24 +778,40 @@ app.post('/api/blogger/reset-cache', auth, (req, res) => {
 
 app.get('/health', (_, res) => res.json({ ok: true, version: '3.1.0' }));
 
-// Scheduled posts runner loop
-setInterval(async () => {
-  for (const [id, p] of Object.entries(db.schedules)) {
-    if (p.when <= Date.now()) {
-      try {
-        await publish(p);
-      } catch (e) {
-        console.error('Scheduled post failed', e?.response?.description || e.message);
+// Scheduled posts runner loop and web server startup if running directly
+let server = null;
+if (require.main === module) {
+  setInterval(async () => {
+    for (const [id, p] of Object.entries(db.schedules)) {
+      if (p.when <= Date.now()) {
+        try {
+          await publish(p);
+        } catch (e) {
+          console.error('Scheduled post failed', e?.response?.description || e.message);
+        }
+        delete db.schedules[id];
+        save();
       }
-      delete db.schedules[id];
-      save();
     }
-  }
-}, 5000);
+  }, 5000);
 
-app.use((e, req, res, next) => {
-  console.error(e);
-  res.status(400).json({ error: e.message || 'Request failed' });
-});
+  server = app.listen(PORT, '0.0.0.0', () => console.log('Admin panel listening on http://0.0.0.0:' + PORT));
+}
 
-app.listen(PORT, '0.0.0.0', () => console.log('Admin panel listening on http://0.0.0.0:' + PORT));
+module.exports = {
+  app,
+  db,
+  save,
+  resolveDirectUrl,
+  sanitizeDatabaseUrls,
+  buttonsSafe,
+  keyboard,
+  bloggerKeyboard,
+  publish,
+  publishBloggerPost,
+  isPostPublished,
+  markPostAsPublished,
+  checkAndPublishBlogger,
+  setupBloggerScheduler,
+  server
+};
